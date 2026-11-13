@@ -1,0 +1,314 @@
+{
+  "schema": "flux.technology.v1",
+  "generic_example": true,
+  "description": "Fictional demo only; not a manufacturing technology.",
+  "library": "generic_b",
+  "technology": "generic_b",
+  "library_path": "/path/to/design_library",
+  "grid": 0.02,
+  "manufacturing_grid": 0.02,
+  "dbu_per_uu": 1000,
+  "order_verified": true,
+  "layers": [
+    {
+      "name": "M1",
+      "number": 200,
+      "order": 1,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 0.25,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M2",
+      "number": 207,
+      "order": 2,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 0.25,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M3",
+      "number": 214,
+      "order": 3,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M4",
+      "number": 221,
+      "order": 4,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M5",
+      "number": 228,
+      "order": 5,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M6",
+      "number": 235,
+      "order": 6,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M7",
+      "number": 242,
+      "order": 7,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M8",
+      "number": 249,
+      "order": 8,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "M9",
+      "number": 256,
+      "order": 9,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 12
+    },
+    {
+      "name": "AP",
+      "number": 263,
+      "order": 10,
+      "order_verified": true,
+      "min_width": 0.3,
+      "min_spacing": 1.5,
+      "min_area": 0.1,
+      "max_width": 24
+    }
+  ],
+  "vias": [
+    {
+      "name": "V_M1_M2",
+      "lower": "M1",
+      "upper": "M2",
+      "cut_layer": "CUT1",
+      "cut_size": [
+        0.4,
+        0.4
+      ],
+      "cut_spacing": [
+        0.3,
+        0.3
+      ],
+      "lower_enclosure": [
+        0.15,
+        0.15
+      ],
+      "upper_enclosure": [
+        0.15,
+        0.15
+      ]
+    },
+    {
+      "name": "V_M2_M3",
+      "lower": "M2",
+      "upper": "M3",
+      "cut_layer": "CUT2",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M3_M4",
+      "lower": "M3",
+      "upper": "M4",
+      "cut_layer": "CUT3",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M4_M5",
+      "lower": "M4",
+      "upper": "M5",
+      "cut_layer": "CUT4",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M5_M6",
+      "lower": "M5",
+      "upper": "M6",
+      "cut_layer": "CUT5",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M6_M7",
+      "lower": "M6",
+      "upper": "M7",
+      "cut_layer": "CUT6",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M7_M8",
+      "lower": "M7",
+      "upper": "M8",
+      "cut_layer": "CUT7",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M8_M9",
+      "lower": "M8",
+      "upper": "M9",
+      "cut_layer": "CUT8",
+      "cut_size": [
+        0.8,
+        0.8
+      ],
+      "cut_spacing": [
+        0.4,
+        0.4
+      ],
+      "lower_enclosure": [
+        0.3,
+        0.3
+      ],
+      "upper_enclosure": [
+        0.3,
+        0.3
+      ]
+    },
+    {
+      "name": "V_M9_AP",
+      "lower": "M9",
+      "upper": "AP",
+      "cut_layer": "CUT9",
+      "cut_size": [
+        3.6,
+        3.6
+      ],
+      "cut_spacing": [
+        1.2,
+        1.2
+      ],
+      "lower_enclosure": [
+        1.1,
+        1.1
+      ],
+      "upper_enclosure": [
+        1.1,
+        1.1
+      ]
+    }
+  ]
+}

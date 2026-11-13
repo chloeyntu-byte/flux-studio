@@ -1,0 +1,166 @@
+{
+  "id": "generic_c/transformer",
+  "label": "generic_c/transformer (synthetic)",
+  "pdk": "generic_c",
+  "family": "transformer",
+  "normalization": {
+    "origin_um": [
+      0,
+      0
+    ],
+    "scale_um": 100
+  },
+  "windings": [
+    {
+      "id": "P",
+      "path": [
+        [
+          -0.2,
+          -0.5
+        ],
+        [
+          -0.4,
+          -0.3
+        ],
+        [
+          -0.4,
+          0.3
+        ],
+        [
+          0.4,
+          0.3
+        ],
+        [
+          0.4,
+          -0.3
+        ],
+        [
+          0.2,
+          -0.5
+        ]
+      ],
+      "positive_file_port": 1,
+      "negative_file_port": 2
+    },
+    {
+      "id": "S",
+      "path": [
+        [
+          -0.1,
+          -0.4
+        ],
+        [
+          -0.3,
+          -0.2
+        ],
+        [
+          -0.3,
+          0.2
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.3,
+          -0.2
+        ],
+        [
+          0.1,
+          -0.4
+        ]
+      ],
+      "positive_file_port": 3,
+      "negative_file_port": 4
+    }
+  ],
+  "pins": [
+    {
+      "name": "P1",
+      "kind": "signal",
+      "file_port": 1,
+      "point": [
+        -0.2,
+        -0.5
+      ],
+      "point_um": [
+        -20.0,
+        -50.0
+      ]
+    },
+    {
+      "name": "P2",
+      "kind": "signal",
+      "file_port": 2,
+      "point": [
+        0.2,
+        -0.5
+      ],
+      "point_um": [
+        20.0,
+        -50.0
+      ]
+    },
+    {
+      "name": "S1",
+      "kind": "signal",
+      "file_port": 3,
+      "point": [
+        -0.1,
+        -0.4
+      ],
+      "point_um": [
+        -10.0,
+        -40.0
+      ]
+    },
+    {
+      "name": "S2",
+      "kind": "signal",
+      "file_port": 4,
+      "point": [
+        0.1,
+        -0.4
+      ],
+      "point_um": [
+        10.0,
+        -40.0
+      ]
+    },
+    {
+      "name": "GND1",
+      "kind": "ground",
+      "file_port": null,
+      "point": [
+        0.6,
+        0.0
+      ],
+      "point_um": [
+        60,
+        0
+      ]
+    },
+    {
+      "name": "GND2",
+      "kind": "ground",
+      "file_port": null,
+      "point": [
+        0.6,
+        0.2
+      ],
+      "point_um": [
+        60,
+        20
+      ]
+    }
+  ],
+  "tap_paths": [],
+  "source_snp_sha256": [
+    "22e52b8e887770cd4883a90325bc6cbdc26b046c11382801f440763f00ccf8e8"
+  ],
+  "provenance": {
+    "source": "procedurally generated illustration; no imported layout or simulation",
+    "geometry_sha256": "ce551874e3715048c1e6301fc60e2b07571fa4647fcb590020643fa91035621f",
+    "generator_sha256": "ce551874e3715048c1e6301fc60e2b07571fa4647fcb590020643fa91035621f"
+  }
+}

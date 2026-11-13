@@ -1,0 +1,109 @@
+{
+  "id": "generic_d/inductor",
+  "label": "generic_d/inductor (synthetic)",
+  "pdk": "generic_d",
+  "family": "inductor",
+  "normalization": {
+    "origin_um": [
+      0,
+      0
+    ],
+    "scale_um": 100
+  },
+  "windings": [
+    {
+      "id": "L",
+      "path": [
+        [
+          -0.2,
+          -0.5
+        ],
+        [
+          -0.4,
+          -0.3
+        ],
+        [
+          -0.4,
+          0.3
+        ],
+        [
+          0.4,
+          0.3
+        ],
+        [
+          0.4,
+          -0.3
+        ],
+        [
+          0.2,
+          -0.5
+        ]
+      ],
+      "positive_file_port": 1,
+      "negative_file_port": 2
+    }
+  ],
+  "pins": [
+    {
+      "name": "L1",
+      "kind": "signal",
+      "file_port": 1,
+      "point": [
+        -0.2,
+        -0.5
+      ],
+      "point_um": [
+        -20.0,
+        -50.0
+      ]
+    },
+    {
+      "name": "L2",
+      "kind": "signal",
+      "file_port": 2,
+      "point": [
+        0.2,
+        -0.5
+      ],
+      "point_um": [
+        20.0,
+        -50.0
+      ]
+    },
+    {
+      "name": "GND1",
+      "kind": "ground",
+      "file_port": null,
+      "point": [
+        0.6,
+        0.0
+      ],
+      "point_um": [
+        60,
+        0
+      ]
+    },
+    {
+      "name": "GND2",
+      "kind": "ground",
+      "file_port": null,
+      "point": [
+        0.6,
+        0.2
+      ],
+      "point_um": [
+        60,
+        20
+      ]
+    }
+  ],
+  "tap_paths": [],
+  "source_snp_sha256": [
+    "e51896f40fb8a8f97191f6ad42d44d7e72c81106be093c0cbe55f2f5134c0ff3"
+  ],
+  "provenance": {
+    "source": "procedurally generated illustration; no imported layout or simulation",
+    "geometry_sha256": "90347d2e3bb6b0326c9784c8c91df34a25b008396581f9ec847fc7659350ce3b",
+    "generator_sha256": "90347d2e3bb6b0326c9784c8c91df34a25b008396581f9ec847fc7659350ce3b"
+  }
+}

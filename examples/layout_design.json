@@ -1,0 +1,6 @@
+{
+  "model": "differential_inductor",
+  "cell": "demo_inductor",
+  "parameters": {"center_tap": true, "pgs_enabled": false, "ring_enabled": false},
+  "layers": {}
+}

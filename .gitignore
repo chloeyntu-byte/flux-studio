@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.bak*
+*.log
+*.cdslck
+.oa-lock
+.venv/
+.pytest_cache/
+/flux_config.sh
+local-runtime/
+*_runtime/
+runtime/
+presets/
+layout.json
+
+# Structure packs are installed locally, never committed
+/packs/*
+!/packs/README.md
