@@ -401,7 +401,10 @@ class TransformerApp:
         self.runtime_info = tk.StringVar(value='Runtime: identifying the current workspace and Cadence installation...')
         self.preview_state = tk.StringVar(value='Load example to begin')
         self.metrics = tk.StringVar(value='Size —    Ring gap —    Via cuts —    Ports —')
-        self.status = tk.StringVar(value='Load example for an offline layout, or choose a technology JSON.')
+        initial = 'Load example for an offline layout, or choose a technology JSON.'
+        if os.environ.get('FLUX_VL3D_ROOT', '').strip() and EMBED_NOTE:
+            initial = '3D preview off: ' + EMBED_NOTE  # configured but not loadable
+        self.status = tk.StringVar(value=initial)
         self._styles()
         self._build()
         self.compact = None
@@ -607,6 +610,11 @@ class TransformerApp:
             self.view_combo = ttk.Combobox(tools, textvariable=self.view_mode, values=VIEW_MODES, state='readonly', width=10)
             self.view_combo.grid(row=0, column=7, padx=(7, 0))
             self.view_combo.bind('<<ComboboxSelected>>', lambda _e: self.switch_view())
+        elif os.environ.get('FLUX_VL3D_ROOT', '').strip():
+            # 3D was requested but cannot load: say why instead of silently hiding it.
+            note = '3D unavailable: ' + EMBED_NOTE
+            self.view_note = ttk.Label(tools, text=note if len(note) <= 70 else note[:67] + '...', style='Muted.TLabel')
+            self.view_note.grid(row=0, column=7, padx=(7, 0))
         leg_row = ttk.Frame(tools, style='Panel.TFrame')
         leg_row.grid(row=1, column=0, columnspan=8, sticky='ew', pady=(5, 0))
         self.leg_status_label = ttk.Label(leg_row, textvariable=self.leg_status, style='Muted.TLabel')

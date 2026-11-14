@@ -7,7 +7,7 @@ Leg pins, EMX metrics on chosen pins, and an optional 3D preview.
 - **Optional 3D preview.** With `FLUX_VL3D_ROOT` pointing at a [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer) checkout (its `native/embed.py` interface, see its `docs/EMBEDDING.md`) and PyOpenGL 3.1.7 / pyopengltk 0.0.4 available (optionally through `FLUX_VL3D_PYTHONPATH`), the preview offers 2D, 3D Studio and 3D Metal; in Leg Pins mode 2D and 3D sit side by side. Use the latest Layout 3D Viewer, which prepares the system GL libraries under conda Pythons. Without `FLUX_VL3D_ROOT` Flux stays 2D only and unchanged.
 - The open-source edition still builds only the differential inductor. Other structures shown in the screenshots are separate structure packs, not included; ask through [GitHub Issues](https://github.com/chloeyntu-byte/flux-studio/issues) if you need one.
 
-Validation: Flux suite 506 tests passed, SNPFit suite 164 passed (3 skipped), on Linux with Python 3.11 and a private X display. The new tests use the built-in differential inductor (TAP on/off, several turns), the example structure pack and a synthetic two-winding test model; the 3D tests use a stand-in engine. The real 3D preview was checked with Layout 3D Viewer on the example technology. Native tools remain mocked.
+Validation: Flux suite 509 tests passed, SNPFit suite 164 passed (3 skipped), on Linux with Python 3.11 and a private X display. The new tests use the built-in differential inductor (TAP on/off, several turns), the example structure pack and a synthetic two-winding test model; the 3D tests use a stand-in engine. The real 3D preview was checked with Layout 3D Viewer on the example technology. Native tools remain mocked.
 
 ---
 

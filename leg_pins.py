@@ -86,7 +86,8 @@ def legs(geometry, grid=0.001):
             if poly.get('layer') != port.get('layer'):
                 continue
             line = [list(map(float, point)) for point in poly['centerline']]
-            key = tuple(map(tuple, line))
+            # Legs on different metals may share an XY centreline.
+            key = (poly.get('layer'), tuple(map(tuple, line)))
             if key in used:
                 continue
             if _inside(line[-1], port['bbox'], tolerance):

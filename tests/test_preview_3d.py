@@ -5,6 +5,7 @@ A fake engine stands in for Layout 3D Viewer, so these tests need no OpenGL.
 """
 import copy
 import os
+from pathlib import Path
 import tkinter as tk
 import unittest
 from unittest import mock
@@ -49,6 +50,34 @@ class FakeEmbed(object):
     def flux_scene(result, technology):
         return dict(pins=[port['name'] for port in result['geometry']['ports']],
                     layers=[layer['name'] for layer in technology['layers']])
+
+
+class ConfiguredButBrokenTests(unittest.TestCase):
+    def test_a_configured_root_that_cannot_load_is_explained_at_start(self):
+        import subprocess, sys, tempfile
+        with tempfile.TemporaryDirectory() as empty:
+            env = dict(os.environ, FLUX_VL3D_ROOT=empty)
+            code = ("import app, tkinter; r = tkinter.Tk(); r.withdraw(); "
+                    "print(repr(app.embed), app.EMBED_NOTE)")
+            out = subprocess.run([sys.executable, '-B', '-c', code], cwd=str(Path(app.__file__).parent),
+                                 env=env, capture_output=True, text=True, timeout=60)
+        self.assertIn('None', out.stdout)
+        self.assertIn('could not be loaded', out.stdout)
+
+    def test_toolbar_shows_the_reason_when_3d_is_configured_but_missing(self):
+        with mock.patch.dict(os.environ, {'FLUX_VL3D_ROOT': '/nonexistent-vl3d'}), \
+                mock.patch.object(app, 'embed', None), mock.patch.object(app, 'EMBED_NOTE', 'FLUX_VL3D_ROOT is not a folder'):
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                with mock.patch('emx_page.EMXPage', base.StubEMXPage):
+                    controller = app.TransformerApp(root)
+                self.assertFalse(hasattr(controller, 'view_combo'))
+                self.assertIn('not a folder', controller.view_note.cget('text'))
+                controller.closed = True
+                controller.tasks.put(None)
+            finally:
+                root.destroy()
 
 
 class DefaultOffTests(unittest.TestCase):

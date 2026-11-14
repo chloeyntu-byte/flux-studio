@@ -254,3 +254,15 @@ class PinMetricTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StackedLegKeyTests(unittest.TestCase):
+    def test_legs_on_different_metals_with_the_same_centerline_are_both_found(self):
+        line = [[0.0, 0.0], [0.0, -40.0]]
+        geometry = dict(
+            polygons=[dict(layer='MA', part='legs', net='P', width=4.0, centerline=line, points=[]),
+                      dict(layer='MB', part='legs', net='S', width=4.0, centerline=line, points=[])],
+            ports=[dict(name='P1', layer='MA', net='P', part='legs', kind='signal', bbox=[[-2, -40], [2, -36]]),
+                   dict(name='S1', layer='MB', net='S', part='legs', kind='signal', bbox=[[-2, -40], [2, -36]])])
+        self.assertEqual([leg['id'] for leg in leg_pins.legs(geometry)], ['P1', 'S1'])
+
