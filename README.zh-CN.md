@@ -121,9 +121,9 @@ python3 -B app.py --example
 
 ![旋转的三目标 Pareto 曲面：Lp、Qp 和有符号 k](docs/screenshots/flux-pareto-surface.gif)
 
-![同一次优化的两目标与三目标 Pareto 前沿](docs/screenshots/flux-pareto-2d.png)
+![同一结构的两目标与三目标优化](docs/screenshots/flux-pareto-2d.png)
 
-*一次真实的 EMX 优化：20 GHz 共面 1:1 变压器（隐式共面、交叉引线，属于**结构包**，不随仓库提供）。每个点都是一个实际求解的候选；曲面只连接已求解的 Pareto 设计，不做插值；有限预算得到的前沿不能证明是全局最优。*
+*真实的 EMX 优化：20 GHz 共面 1:1 变压器（隐式共面、交叉引线，属于**结构包**，不随仓库提供），同一结构分别做了两目标和三目标优化，曲面是三目标前沿。每个点都是一个实际求解的候选；曲面只连接已求解的 Pareto 设计，不做插值；有限预算得到的前沿不能证明是全局最优。*
 
 ### SNPFit：从 S 参数到等效电路
 

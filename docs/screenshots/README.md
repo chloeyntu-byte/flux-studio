@@ -1,6 +1,6 @@
 # Screenshots
 
-Captured from real Tk windows on a private 1600x1000 X display, using the fictional example technology (`app.py --example`). The 1280 image shows a 1280x800 window. No real technology or EDA result is shown.
+Application screenshots are captured from real Tk windows on a private 1600x1000 X display, using the fictional example technology (`app.py --example`); the 1280 images show a 1280x800 window. The Pareto and SNPFit result images marked **structure pack** are the exception: they plot real EMX simulation results of structure-pack transformers, without technology names, and are labelled as such below.
 
 The open-source repository builds only the **differential inductor**. Images marked **structure pack** show structures that are separate structure packs; they are not included in this repository (ask through [GitHub Issues](https://github.com/chloeyntu-byte/flux-studio/issues) if you need one). 3D images use the optional [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer) embedding.
 
@@ -24,7 +24,7 @@ The open-source repository builds only the **differential inductor**. Images mar
 | [flux-emx-pins.png](flux-emx-pins.png) | EMX goals assigned to custom pins; one result column per pin metric |
 | [flux-results.png](flux-results.png) | Qp viridis heatmap from nine ideal-circuit SNPs (synthetic replay) |
 | [flux-pareto-surface.gif](flux-pareto-surface.gif) | Animated: three-objective Pareto surface (Lp, Qp, signed k) of a real EMX optimization of a 20 GHz coplanar 1:1 transformer (**structure pack**) |
-| [flux-pareto-2d.png](flux-pareto-2d.png) | Two- and three-objective Pareto fronts of the same run (**structure pack**) |
+| [flux-pareto-2d.png](flux-pareto-2d.png) | Two-objective and three-objective optimizations of the same structure (**structure pack**) |
 | [flux-structures.png](flux-structures.png) | Built-in differential inductor (top left) and five **structure pack** layouts: implicit coplanar 1:1 direct / crossed leads, octagonal inductor with TAP, coplanar transformer, stacked transformer |
 | [flux-structures-3d.png](flux-structures-3d.png) | The same six layouts in 3D Studio; all but the top-left tile are **structure packs** |
 | [flux-pack-stacked-3d.png](flux-pack-stacked-3d.png) | Stacked transformer in 3D Metal (**structure pack**, not included) |

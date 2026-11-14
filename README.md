@@ -121,9 +121,9 @@ Optimize mode runs NSGA-II over the same parameters with several objectives and 
 
 ![Rotating three-objective Pareto surface: Lp, Qp and signed k](docs/screenshots/flux-pareto-surface.gif)
 
-![Two- and three-objective Pareto fronts of one optimization run](docs/screenshots/flux-pareto-2d.png)
+![Two-objective and three-objective optimizations of the same structure](docs/screenshots/flux-pareto-2d.png)
 
-*A real EMX optimization of a 20 GHz coplanar 1:1 transformer (implicit coplanar, crossed leads — a **structure pack**, not included). Every point is one solved candidate; facets only join solved Pareto designs, nothing is interpolated, and a finite-budget front is not a proof of a global optimum.*
+*Real EMX optimizations of a 20 GHz coplanar 1:1 transformer (implicit coplanar, crossed leads — a **structure pack**, not included): a two-objective run and a three-objective run of the same structure; the surface is the three-objective front. Every point is one solved candidate; facets only join solved Pareto designs, nothing is interpolated, and a finite-budget front is not a proof of a global optimum.*
 
 ### SNPFit: from S-parameters to an equivalent circuit
 
