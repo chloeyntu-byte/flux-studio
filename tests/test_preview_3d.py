@@ -76,6 +76,8 @@ class ConfiguredButBrokenTests(unittest.TestCase):
                 self.assertIn('not a folder', controller.view_note.cget('text'))
                 controller.closed = True
                 controller.tasks.put(None)
+                if getattr(controller, '_poll_after', None):
+                    root.after_cancel(controller._poll_after)
             finally:
                 root.destroy()
 
