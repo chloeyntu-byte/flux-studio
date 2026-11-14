@@ -15,12 +15,41 @@ from types import SimpleNamespace
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+from emx_search import PIN_METRIC_COUNTS, check_pins, metric_key, metric_specs, parse_metric_key
+
 BG = fw.PANEL
 INK = fw.TEXT
 MUTED = fw.DIM
 CYAN = fw.accent('flux')
 METRICS = ('L', 'Q', 'Lp', 'Ls', 'k', 'Qp', 'Qs')
 SERIES_COLORS = tuple(fw.SERIES)
+PIN_ERROR = '#ff8a80'
+CUSTOM_PIN_NOTICE = 'Layout uses custom leg pins: assign pins to every metric.'
+PIN_LABELS = {2: ('+', '\u2212'), 4: ('Pair 1 +', 'Pair 1 \u2212', 'Pair 2 +', 'Pair 2 \u2212')}
+
+
+def _metric_unit(key):
+    """Display unit suffix for a metric or pin-assigned metric key."""
+    return ' (nH)' if parse_metric_key(key)[0] in ('L', 'Lp', 'Ls') else ''
+
+
+def _split_goal_line(line):
+    """Split a goal line on commas outside ``[...]`` pin lists."""
+    parts, depth, current = [], 0, ''
+    for char in line:
+        if char == '[': depth += 1
+        elif char == ']': depth = max(0, depth-1)
+        if char == ',' and depth == 0:
+            parts.append(current.strip()); current = ''
+        else: current += char
+    parts.append(current.strip())
+    return parts
+
+
+def _same_goal(a, b):
+    """Same metric key at the same frequency (pins distinguish goals)."""
+    fa, fb = a['frequency_hz'], b['frequency_hz']
+    return metric_key(a) == metric_key(b) and abs(fa-fb) <= max(abs(fa)*1e-12, 1e-12)
 
 
 def _number(value, name, integer=False):
@@ -475,8 +504,8 @@ class EMXPage(ttk.Frame):
             while True:
                 task=tasks.get()
                 if task is None:return
-                revision,ident,serial,signature,row=task
-                done.put((revision,ident,serial,signature,hydrate_row(row)))
+                revision,ident,serial,signature,row,specs=task
+                done.put((revision,ident,serial,signature,hydrate_row(row,specs)))
         threading.Thread(target=hydrate_worker,daemon=True).start()
         self._result_queue=queue.Queue();self._result_worker=None;self._result_cancel=None;self._result_revision=0;self._fit_tabs=[];self._pre_fit_tab_states={}
         self._video_active = False
@@ -605,11 +634,15 @@ class EMXPage(ttk.Frame):
         self.pin_text=tk.StringVar(value='Pins: apply and sync a layout.')
         ttk.Label(summary,textvariable=self.pin_text,style='Muted.TLabel',wraplength=300,justify='left').grid(row=2,column=0,sticky='w',pady=(8,0))
         goal=self._settings_card(settings,'Objectives & Constraints');self.goal_tab=goal;goal.columnconfigure(0,weight=1)
+        self.goal_pin_notice=ttk.Label(goal,text=CUSTOM_PIN_NOTICE,foreground='#f4cb93',wraplength=300)
+        self.goal_pin_notice.grid(row=0,column=0,sticky='w');self.goal_pin_notice.grid_remove()
         self.goal_help=tk.StringVar(value='Goal frequency must match an EMX Settings sample. Inductance is in nH.')
         ttk.Label(goal,textvariable=self.goal_help,style='Muted.TLabel',wraplength=300).grid(row=1,column=0,sticky='w')
-        self.goal_tree=ttk.Treeview(goal,columns=('kind','metric','freq','rule','value'),show='headings',height=3,selectmode='browse')
-        for col,title,width in (('kind','Type',70),('metric','Metric',52),('freq','GHz',54),('rule','Rule',65),('value','Value',70)):
+        self.goal_tree=ttk.Treeview(goal,columns=('kind','metric','freq','rule','value'),show='headings',height=4,selectmode='browse')
+        # Metric holds pin keys such as Lp[pin_1,pin_2]; it takes the spare width.
+        for col,title,width in (('kind','Type',66),('metric','Metric',122),('freq','GHz',40),('rule','Rule',58),('value','Value',46)):
             self.goal_tree.heading(col,text=title);self.goal_tree.column(col,width=width,stretch=True)
+        self.goal_tree.tag_configure('pin_error',foreground=PIN_ERROR)
         self.goal_tree.grid(row=2,column=0,sticky='ew');self.goal_tree.bind('<<TreeviewSelect>>',self._goal_selected)
         editor=ttk.Frame(goal);editor.grid(row=3,column=0,sticky='ew');editor.columnconfigure(1,weight=1);editor.columnconfigure(3,weight=1)
         self.goal_vars={k:tk.StringVar(value=v) for k,v in dict(kind='Objective',metric='',frequency='',rule='maximize',low='',high='').items()}
@@ -622,6 +655,19 @@ class EMXPage(ttk.Frame):
             else:widget=ttk.Entry(editor,textvariable=self.goal_vars[key],width=8)
             widget.grid(row=row,column=col+1,sticky='ew',padx=(0,4));self.goal_widgets[key]=widget
         self.goal_widgets['kind'].bind('<<ComboboxSelected>>',self._goal_kind_changed)
+        # Pin assignment: + / − for L/Q-type metrics, two pairs for k.
+        pins=ttk.Frame(editor);pins.grid(row=3,column=0,columnspan=4,sticky='ew',pady=(2,0));self.goal_pin_frame=pins
+        pins.columnconfigure(1,weight=1);pins.columnconfigure(3,weight=1)
+        self.goal_pin_hint=tk.StringVar(value='')
+        ttk.Label(pins,textvariable=self.goal_pin_hint,style='Muted.TLabel',wraplength=300).grid(row=0,column=0,columnspan=4,sticky='w')
+        self.goal_pin_vars=[tk.StringVar(value='') for _ in range(4)];self.goal_pin_labels=[];self.goal_pin_widgets=[]
+        for i in range(4):
+            row,col=1+i//2,(i%2)*2
+            label=ttk.Label(pins,text='');label.grid(row=row,column=col,sticky='w')
+            box=ttk.Combobox(pins,textvariable=self.goal_pin_vars[i],values=(),state='readonly',width=8);box.grid(row=row,column=col+1,sticky='ew',padx=(2,4))
+            self.goal_pin_labels.append(label);self.goal_pin_widgets.append(box)
+        self.goal_vars['metric'].trace_add('write',lambda *args:self._goal_update_pin_widgets())
+        self._goal_update_pin_widgets()
         controls=ttk.Frame(goal);controls.grid(row=4,column=0,sticky='ew')
         self.goal_add_btn=ttk.Button(controls,text='Add',command=lambda:self._goal_apply(False));self.goal_add_btn.pack(side='left')
         self.goal_update_btn=ttk.Button(controls,text='Update selected',command=lambda:self._goal_apply(True));self.goal_update_btn.pack(side='left',padx=4)
@@ -631,7 +677,7 @@ class EMXPage(ttk.Frame):
         self.goal_text_open=tk.BooleanVar(value=False)
         ttk.Checkbutton(goal,text='Advanced text (Hz)',variable=self.goal_text_open,command=self._toggle_goal_text).grid(row=6,column=0,sticky='w')
         self.goal_text_frame=ttk.Frame(goal);self.goal_text_frame.grid(row=7,column=0,sticky='ew');self.goal_text_frame.columnconfigure(0,weight=1)
-        ttk.Label(self.goal_text_frame,text='Objectives (one per line)').grid(row=0,column=0,sticky='w')
+        ttk.Label(self.goal_text_frame,text='Objectives (one per line; pins as Lp[pin_1,pin_2])').grid(row=0,column=0,sticky='w')
         self.objectives=tk.Text(self.goal_text_frame,height=3,bg=fw.PLOT_BG,fg=INK,insertbackground=INK,wrap='none');self.objectives.grid(row=1,column=0,sticky='ew')
         ttk.Label(self.goal_text_frame,text='Constraints (between uses low:high)').grid(row=2,column=0,sticky='w')
         self.constraints=tk.Text(self.goal_text_frame,height=3,bg=fw.PLOT_BG,fg=INK,insertbackground=INK,wrap='none');self.constraints.grid(row=3,column=0,sticky='ew')
@@ -656,7 +702,7 @@ class EMXPage(ttk.Frame):
         else:self._goal_sync_tree();self.goal_text_frame.grid_remove()
 
     def _goal_text_changed(self,event=None):
-        self._goal_sync_tree();self._refresh_chart_choices()
+        self._goal_sync_tree();self._refresh_chart_choices();self._refresh_results()
 
     def _goal_refresh_frequencies(self):
         try:
@@ -676,57 +722,125 @@ class EMXPage(ttk.Frame):
     def _goal_lines(self,widget):
         return [line.strip() for line in widget.get('1.0','end').splitlines() if line.strip()]
 
+    def _source_pins(self):
+        return [str(p) for p in ((self.source or {}).get('pins') or [])]
+
+    def _custom_pins(self):
+        return bool((self.source or {}).get('custom_pins'))
+
+    def _goal_update_pin_widgets(self):
+        """Show one pin selector per pin the chosen metric needs."""
+        metric=self.goal_vars['metric'].get();pins=self._source_pins()
+        count=PIN_METRIC_COUNTS.get(metric,0) if len(pins)>=2 else 0
+        custom=self._custom_pins()
+        values=tuple(pins) if custom else ('',)+tuple(pins)
+        for i,(label,box) in enumerate(zip(self.goal_pin_labels,self.goal_pin_widgets)):
+            if i<count:
+                label.configure(text=PIN_LABELS[count][i]);box.configure(values=values);label.grid();box.grid()
+                if self.goal_pin_vars[i].get() not in values:self.goal_pin_vars[i].set('')
+            else:label.grid_remove();box.grid_remove()
+        if not count:self.goal_pin_frame.grid_remove();self.goal_pin_hint.set('');return
+        self.goal_pin_frame.grid()
+        self.goal_pin_hint.set(('Pins (required): ' if custom else 'Pins (all blank = default winding pair): ')+
+                               ('differential +, \u2212; other pins open' if count==2 else 'two differential pairs'))
+
+    def _goal_pins_from_editor(self,metric):
+        """Pins chosen in the editor, ``None`` for the default winding pair."""
+        pins=self._source_pins();count=PIN_METRIC_COUNTS.get(metric,0) if len(pins)>=2 else 0
+        if not count:
+            if self._custom_pins():raise ValueError('The layout uses custom leg pins, but metric %s cannot be assigned to pins.' % metric)
+            return None
+        chosen=[var.get().strip() for var in self.goal_pin_vars[:count]]
+        if not any(chosen):
+            if self._custom_pins():raise ValueError('The layout uses custom leg pins; choose %d pins for %s.' % (count,metric))
+            return None
+        if not all(chosen):
+            raise ValueError('Choose all %d pins for %s%s.' % (count,metric,'' if self._custom_pins() else ', or leave them all blank for the default winding pair'))
+        return check_pins(metric,chosen,pins)
+
+    def _goal_pin_problem(self,goal):
+        """Why a parsed goal no longer fits the synced layout's pins, or None."""
+        pins=goal.get('pins');source=self.source or {}
+        if pins:
+            available=source.get('pins')
+            missing=[p for p in pins if available is not None and p not in available]
+            if missing:return 'pins %s are not in the synced layout' % ', '.join(missing)
+            try:check_pins(goal['metric'],pins)
+            except ValueError as exc:return str(exc)
+        elif source.get('custom_pins'):return 'custom leg pins need assigned pins'
+        return None
+
     def _goal_sync_tree(self):
         for item in self.goal_tree.get_children():self.goal_tree.delete(item)
+        problems=[]
         for prefix,widget,constraint in (('o',self.objectives,False),('c',self.constraints,True)):
             for index,line in enumerate(self._goal_lines(widget)):
+                tags=()
                 try:
-                    g=self._parse_goals(line,constraint)[0];rule=g.get('operator',g.get('direction'));val=g.get('limit',g.get('target',''))
+                    g=self._parse_goals(line,constraint,strict=False)[0];rule=g.get('operator',g.get('direction'));val=g.get('limit',g.get('target',''))
                     if isinstance(val,list):val='%s : %s' % tuple(val)
-                    values=('Constraint' if constraint else 'Objective',g['metric'],format(g['frequency_hz']/1e9,'.12g'),rule,str(val))
+                    values=('Constraint' if constraint else 'Objective',metric_key(g),format(g['frequency_hz']/1e9,'.12g'),rule,str(val))
+                    problem=self._goal_pin_problem(g)
+                    if problem:tags=('pin_error',);problems.append('%s: %s' % (metric_key(g),problem))
                 except (ValueError,IndexError):values=('Invalid',line,'','','')
-                self.goal_tree.insert('', 'end',iid='%s:%s' % (prefix,index),values=values)
+                self.goal_tree.insert('', 'end',iid='%s:%s' % (prefix,index),values=values,tags=tags)
+        self._goal_problems=problems
+        if problems:self.goal_status.set('Pins need attention (red rows): '+'; '.join(problems))
 
     def _goal_selected(self,event=None):
         selected=self.goal_tree.selection()
         if not selected:return
         prefix,index=selected[0].split(':');constraint=prefix=='c';widget=self.constraints if constraint else self.objectives
-        try:g=self._parse_goals(self._goal_lines(widget)[int(index)],constraint)[0]
+        try:g=self._parse_goals(self._goal_lines(widget)[int(index)],constraint,strict=False)[0]
         except (ValueError,IndexError):self.goal_status.set('Invalid text row: open Advanced text to correct it.');return
         self.goal_vars['kind'].set('Constraint' if constraint else 'Objective');self._goal_kind_changed()
         self.goal_vars['metric'].set(g['metric']);self.goal_vars['frequency'].set(format(g['frequency_hz']/1e9,'.17g'))
+        pins=g.get('pins') or []
+        for i,var in enumerate(self.goal_pin_vars):var.set(pins[i] if i<len(pins) else '')
         self.goal_vars['rule'].set(g.get('operator',g.get('direction')));value=g.get('limit',g.get('target',''))
         self.goal_vars['low'].set(str(value[0] if isinstance(value,list) else value));self.goal_vars['high'].set(str(value[1]) if isinstance(value,list) else '')
+        problem=self._goal_pin_problem(g)
+        if problem:self.goal_status.set('%s: %s; choose pins and Update selected.' % (metric_key(g),problem))
 
     def _goal_apply(self,update=False):
         try:
             selected=self.goal_tree.selection();kind=self.goal_vars['kind'].get();constraint=kind=='Constraint';prefix='c' if constraint else 'o'
             if update and (not selected or selected[0].split(':')[0]!=prefix):raise ValueError('Select a row of the same type to update.')
             metric=self.goal_vars['metric'].get();freq=_number(self.goal_vars['frequency'].get(),'Frequency (GHz)')*1e9
+            pins=self._goal_pins_from_editor(metric);key=metric_key(dict(metric=metric,pins=pins))
             get=lambda k:self.v[k].get()
             freqs=frequency_list(get('freq_values') if get('freq_mode')=='list' else get('freq_start'),get('freq_stop'),get('freq_mode'),get('freq_amount'))
             matches=[f for f in freqs if abs(f-freq)<=max(abs(f)*1e-12,1e-12)]
             if len(matches)!=1:raise ValueError('Choose a unique frequency from the EMX Settings samples.')
             freq=matches[0];rule=self.goal_vars['rule'].get();low=self.goal_vars['low'].get().strip();high=self.goal_vars['high'].get().strip()
             value=(low+':'+high) if constraint and rule=='between' else low
-            line='%s, %.17g, %s' % (metric,freq,rule)
+            line='%s, %.17g, %s' % (key,freq,rule)
             if constraint or rule=='target':line+=', '+value
             widget=self.constraints if constraint else self.objectives;lines=self._goal_lines(widget)
             if update:
-                index=int(selected[0].split(':')[1]);old=self._parse_goals(lines[index],constraint)[0];scale=old.get('scale',1.0)
+                index=int(selected[0].split(':')[1]);old=self._parse_goals(lines[index],constraint,strict=False)[0];scale=old.get('scale',1.0)
                 if scale!=1.0:line+=(', , ' if not constraint and rule!='target' else ', ')+str(scale)
-            self._parse_goals(line,constraint)
+            goal=self._parse_goals(line,constraint)[0]
+            for other_index,other in enumerate(lines):
+                if update and other_index==index:continue
+                try:existing=self._parse_goals(other,constraint,strict=False)[0]
+                except (ValueError,IndexError):continue
+                if _same_goal(goal,existing):
+                    raise ValueError('%s already has %s at %.6g GHz; use different pins or frequency%s.' % (
+                        'Constraints' if constraint else 'Objectives',key,freq/1e9,' (or one between constraint)' if constraint else ''))
             if update:lines[index]=line
             else:lines.append(line)
-            widget.delete('1.0','end');widget.insert('1.0','\n'.join(lines));self._goal_sync_tree();self._refresh_chart_choices()
-            self.goal_status.set('Saved. Frequency matches an EMX sample.')
+            widget.delete('1.0','end');widget.insert('1.0','\n'.join(lines));self._goal_sync_tree();self._refresh_chart_choices();self._refresh_results()
+            problems=getattr(self,'_goal_problems',[])
+            self.goal_status.set('Saved. Frequency matches an EMX sample.'+(' %d row(s) still need pins (red).' % len(problems) if problems else ''))
         except (ValueError,IndexError) as exc:self.goal_status.set(str(exc))
 
     def _goal_remove(self):
         selected=self.goal_tree.selection()
         if not selected:self.goal_status.set('Select a row to remove.');return
         prefix,index=selected[0].split(':');widget=self.constraints if prefix=='c' else self.objectives;lines=self._goal_lines(widget);del lines[int(index)]
-        widget.delete('1.0','end');widget.insert('1.0','\n'.join(lines));self._goal_sync_tree();self._refresh_chart_choices();self.goal_status.set('Row removed.')
+        widget.delete('1.0','end');widget.insert('1.0','\n'.join(lines));self._goal_sync_tree();self._refresh_chart_choices();self._refresh_results()
+        if not getattr(self,'_goal_problems',[]):self.goal_status.set('Row removed.')
 
     def _settings_card(self,parent,title):
         card=ttk.Frame(parent,style='Panel.TFrame');card.pack(fill='x',padx=4,pady=0)
@@ -784,13 +898,8 @@ class EMXPage(ttk.Frame):
         status_legend=ttk.Frame(table);status_legend.grid(row=1,column=0,sticky='w')
         for index,(label,color,foreground) in enumerate((('Fail: failed / rejected / cancelled','#57333b','#fff0ef'),('Infeasible: constraints not met','#654526','#fff2df'),('Feasible: constraints met','#294b42','#ecfff8'),('Optimal: current feasible Pareto','#5a512b','#fff9d8'))):
             tk.Label(status_legend,text=label,bg=color,fg=foreground,font=('sans',8),padx=4).grid(row=index//2,column=index%2,sticky='w',padx=0,pady=0)
-        self.results=ttk.Treeview(table,columns=('status','values','objectives','constraint','snp')+METRICS,show='tree headings',selectmode='browse',height=2)
-        self.results.heading('#0',text='Candidate');self.results.column('#0',width=85,stretch=False)
-        for name,title,width in [('status','Status',150),('values','Parameters',200),('objectives','Objectives',140),('constraint','Feasibility',85),('snp','SNP',160)]:
-            self.results.heading(name,text=title);self.results.column(name,width=width,minwidth=65)
-        for metric in METRICS:
-            self.results.heading(metric,text=metric + (' (nH)' if metric in ('L','Lp','Ls') else ''),command=lambda m=metric:self._sort_results(m))
-            self.results.column(metric,width=85,minwidth=65,stretch=False,anchor='e')
+        self.results=ttk.Treeview(table,show='tree headings',selectmode='browse',height=2)
+        self._pin_keys=None;self._configure_result_columns(())
         self.results.grid(row=2,column=0,sticky='nsew');vs=ttk.Scrollbar(table,command=self.results.yview);vs.grid(row=2,column=1,sticky='ns');hs=ttk.Scrollbar(table,orient='horizontal',command=self.results.xview);hs.grid(row=3,column=0,sticky='ew');self.results.configure(yscrollcommand=vs.set,xscrollcommand=hs.set)
         self.results.tag_configure('warning',foreground='#f4cb93')
         self.results.tag_configure('fail',background='#57333b',foreground='#fff0ef')
@@ -867,7 +976,8 @@ class EMXPage(ttk.Frame):
             source=copy.deepcopy(self.get_source())
             if not isinstance(source,dict) or not isinstance(source.get('fields'),list):raise ValueError('Invalid source metadata.')
         except Exception as exc:
-            self._discovery_generation+=1;self._discovery_request=None;self.source=None;self.source_text.set(str(exc));self.pin_text.set('Pins: apply and sync a layout.');self._render_fields();return
+            self._discovery_generation+=1;self._discovery_request=None;self.source=None;self.source_text.set(str(exc));self.pin_text.set('Pins: apply and sync a layout.');self._render_fields()
+            self.goal_pin_notice.grid_remove();self._goal_update_pin_widgets();return
         old_model=self.source_model
         new_model=source.get('design',{}).get('model')
         if old_model and old_model != new_model:
@@ -895,10 +1005,14 @@ class EMXPage(ttk.Frame):
         self.axes={k:v for k,v in self.axes.items() if k in valid}
         design=source.get('design',{})
         metrics=source.get('definition',{}).get('emx_metrics') or []
+        if source.get('custom_pins'):metrics=list(METRICS)
         if metrics:
             self.goal_help.set('Goal frequency must match an EMX Settings sample. Inductance is in nH.')
             self.goal_widgets['metric'].configure(values=metrics)
             if self.goal_vars['metric'].get() not in metrics:self.goal_vars['metric'].set(metrics[0])
+        if source.get('custom_pins'):self.goal_pin_notice.grid()
+        else:self.goal_pin_notice.grid_remove()
+        self._goal_update_pin_widgets()
         self.source_text.set('Applied: %s / %s · %s' % (design.get('library',''),design.get('cell',''),new_model or ''))
         self._render_fields();self._estimate();self._update_display_columns();self._goal_sync_tree();self._refresh_chart_choices()
 
@@ -949,16 +1063,29 @@ class EMXPage(ttk.Frame):
             self.estimate.set('Sweep: %s combinations' % count)
         except Exception as exc:self.estimate.set('Range error: %s' % exc)
 
-    def _parse_goals(self, text, constraint=False):
+    def _parse_goals(self, text, constraint=False, strict=True):
+        """Parse goal lines ``metric[pins], Hz, rule, value, scale``.
+
+        ``strict`` also checks pins against the synced layout and requires pins
+        for custom leg-pin layouts; the goal table parses leniently so stale
+        rows can be shown and repaired.
+        """
         result=[]
+        source=self.source or {}
         for number,line in enumerate(text.strip().splitlines(),1):
             if not line.strip():continue
-            parts=[p.strip() for p in line.split(',')]
+            parts=_split_goal_line(line)
             if len(parts)<3 or len(parts)>5:raise ValueError('Goal line %s requires metric, Hz, direction/operator, optional value and scale.' % number)
-            metric=parts[0]
-            if metric not in ('L','Q','Lp','Ls','k','Qp','Qs'):raise ValueError('Unknown metric on line %s.' % number)
-            allowed=(self.source or {}).get('definition',{}).get('emx_metrics')
-            if allowed and metric not in allowed:raise ValueError('Metric %s is unavailable for this model; choose %s.' % (metric, ', '.join(allowed)))
+            metric,pins=parse_metric_key(parts[0])
+            if metric not in METRICS:raise ValueError('Unknown metric on line %s.' % number)
+            if pins is not None:
+                try:check_pins(metric,pins,source.get('pins') if strict else None)
+                except ValueError as exc:raise ValueError('Goal line %s: %s' % (number,exc))
+            else:
+                if strict and source.get('custom_pins'):
+                    raise ValueError('Goal line %s: the layout uses custom leg pins; assign pins, e.g. %s.' % (number,'k[a,b,c,d]' if metric=='k' else metric+'[pin_1,pin_2]'))
+                allowed=source.get('definition',{}).get('emx_metrics')
+                if allowed and metric not in allowed:raise ValueError('Metric %s is unavailable for this model; choose %s.' % (metric, ', '.join(allowed)))
             freq=_number(parts[1],'Goal frequency');op=parts[2].lower()
             if freq<=0:raise ValueError('Goal frequency must be positive.')
             if constraint:
@@ -966,9 +1093,11 @@ class EMXPage(ttk.Frame):
                 limit=[_number(p,'Limit') for p in parts[3].split(':')] if op=='between' else _number(parts[3],'Limit')
                 if op=='between' and (len(limit)!=2 or limit[0]>limit[1]):raise ValueError('Between requires ordered low:high limits.')
                 row=dict(metric=metric,frequency_hz=freq,operator=op,limit=limit)
+                if pins:row['pins']=pins
             else:
                 if op not in ('minimize','maximize','target'):raise ValueError('Direction must be minimize, maximize or target.')
                 row=dict(metric=metric,frequency_hz=freq,direction=op)
+                if pins:row['pins']=pins
                 if op=='target':
                     if len(parts)<4 or not parts[3]:raise ValueError('Target requires a value.')
                     row['target']=_number(parts[3],'Target')
@@ -983,6 +1112,10 @@ class EMXPage(ttk.Frame):
         objectives=self._parse_goals(self.objectives.get('1.0','end'))
         constraints=self._parse_goals(self.constraints.get('1.0','end'),True)
         if self.mode.get()=='optimize' and not objectives:raise ValueError('Optimization requires at least one objective.')
+        for kind,goals in (('Objective',objectives),('Constraint',constraints)):
+            for index,goal in enumerate(goals):
+                if any(_same_goal(goal,other) for other in goals[:index]):
+                    raise ValueError('%s %s at %s Hz appears twice; use different pins or frequencies.' % (kind,metric_key(goal),goal['frequency_hz']))
         for goal in objectives+constraints:
             frequency=goal['frequency_hz']
             if sum(abs(f-frequency)<=max(abs(frequency)*1e-12,1e-12) for f in freqs)!=1:
@@ -1156,7 +1289,9 @@ class EMXPage(ttk.Frame):
         self._hydrate_serial+=1;serial=self._hydrate_serial
         self._hydrate_state[ident]=(signature,serial)
         row['metrics']=[];row['objective_values']=[];row['feasible']=None;row['violation']=None;row.pop('data_error',None);row.pop('evaluation_error',None);row['_data_pending']=True
-        self._hydrate_tasks.put((self._result_revision,ident,serial,signature,copy.deepcopy(row)))
+        config=getattr(self.campaign,'config',None) or {}
+        specs=metric_specs(config.get('objectives') or [],config.get('constraints') or [])
+        self._hydrate_tasks.put((self._result_revision,ident,serial,signature,copy.deepcopy(row),specs))
 
     def _drain_hydrated(self):
         changed=False
@@ -1193,17 +1328,44 @@ class EMXPage(ttk.Frame):
                 if isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value): return value
         return None
 
+    def _configure_result_columns(self,keys):
+        """(Re)build result columns: fixed metrics plus one per pin-assigned key."""
+        keys=tuple(keys)
+        if keys==self._pin_keys:return
+        self._pin_keys=keys
+        # Display columns may name keys that are about to disappear.
+        self.results.configure(displaycolumns='#all')
+        self.results.configure(columns=('status','values','objectives','constraint','snp')+METRICS+keys)
+        self.results.heading('#0',text='Candidate');self.results.column('#0',width=85,stretch=False)
+        for name,title,width in [('status','Status',150),('values','Parameters',200),('objectives','Objectives',140),('constraint','Feasibility',85),('snp','SNP',160)]:
+            self.results.heading(name,text=title);self.results.column(name,width=width,minwidth=65)
+        for metric in METRICS+keys:
+            self.results.heading(metric,text=metric+_metric_unit(metric),command=lambda m=metric:self._sort_results(m))
+            self.results.column(metric,width=85 if metric in METRICS else max(110,7*len(metric)+40),minwidth=65,stretch=False,anchor='e')
+        if self.sort_column and self.sort_column not in METRICS+keys:self.sort_column=None;self.sort_reverse=False
+
+    def _pin_metric_keys(self):
+        """Pin-assigned metric keys of the active configuration, then any observed."""
+        _,config=self._chart_context()
+        keys=[spec['key'] for spec in metric_specs(config.get('objectives') or [],config.get('constraints') or [])]
+        for row in self.rows.values():
+            for sample in row.get('metrics') or []:
+                keys.extend(k for k in sample if isinstance(k,str) and '[' in k)
+        return tuple(dict.fromkeys(keys))
+
     def _update_display_columns(self):
         # Prefer the campaign's frozen source when results belong to a run.
         campaign_source=getattr(self.campaign,'source',None) if self.rows else None
         source=campaign_source or self.source or {}
+        keys=self._pin_metric_keys();self._configure_result_columns(keys)
         declared=(source.get('definition') or {}).get('emx_metrics') or []
         metrics=[m for m in METRICS if m in declared]
-        if not metrics:
+        if not metrics or source.get('custom_pins'):
+            # Custom leg pins have no default winding pairs: show only measured plain metrics.
             observed={m for row in self.rows.values() for sample in row.get('metrics') or [] for m in METRICS if m in sample}
             metrics=[m for m in METRICS if m in observed]
-        if not metrics: metrics=list(METRICS)
-        self.results.configure(displaycolumns=('status',)+tuple(metrics)+('values','objectives','constraint','snp'))
+        if not metrics and not keys: metrics=list(METRICS)
+        self.results.configure(displaycolumns=('status',)+tuple(metrics)+keys+('values','objectives','constraint','snp'))
 
     def _refresh_results(self):
         self._update_display_columns()
@@ -1224,7 +1386,7 @@ class EMXPage(ttk.Frame):
             elif row.get('status') == 'completed' and feasible is False: state='infeasible'
             elif row.get('status') == 'completed' and feasible is True: state='optimal' if ident in self.pareto_ids else 'feasible'
             else: state='pending'
-            metrics=[self._sample_value(row,m) for m in METRICS]
+            metrics=[self._sample_value(row,m) for m in METRICS+self._pin_keys]
             vals=(status,text,', '.join(map(str,row.get('objective_values') or [])), 'Yes' if row.get('status') == 'completed' and feasible is True else 'No' if row.get('status') == 'completed' and feasible is False else '—',Path(row['snp_path']).name if row.get('snp_path') else '') + tuple('%.7g' % v if v is not None else '—' for v in metrics)
             tags=(state,'warning') if warnings else (state,)
             if self.results.exists(ident): self.results.item(ident,values=vals,tags=tags)
@@ -1248,11 +1410,13 @@ class EMXPage(ttk.Frame):
         campaign_config=getattr(self.campaign,'config',None)
         if campaign_config:
             return (getattr(self.campaign,'source',None) or self.source or {},campaign_config)
-        try: goals=self._parse_goals(self.objectives.get('1.0','end'))
+        try: goals=self._parse_goals(self.objectives.get('1.0','end'),strict=False)
         except ValueError: goals=[]
+        try: limits=self._parse_goals(self.constraints.get('1.0','end'),True,strict=False)
+        except ValueError: limits=[]
         try: frequencies=frequency_list(self.v['freq_values'].get() if self.v['freq_mode'].get() == 'list' else self.v['freq_start'].get(),self.v['freq_stop'].get(),self.v['freq_mode'].get(),self.v['freq_amount'].get())
         except ValueError: frequencies=[]
-        return self.source or {},dict(mode=self.mode.get(),axes=list(self.axes.values()),objectives=goals,emx=dict(frequencies_hz=frequencies))
+        return self.source or {},dict(mode=self.mode.get(),axes=list(self.axes.values()),objectives=goals,constraints=limits,emx=dict(frequencies_hz=frequencies))
 
     def _refresh_chart_choices(self):
         from emx_charts import axis_options
@@ -1269,7 +1433,7 @@ class EMXPage(ttk.Frame):
         if mode == 'optimize' and objectives:
             for key,index in (('x',0),('y',1),('z',2)):
                 if not self.chart_vars[key].get() and len(objectives)>index:
-                    self.chart_vars[key].set(objectives[index]['metric'])
+                    self.chart_vars[key].set(metric_key(objectives[index]))
                     self.chart_vars[key+'_frequency_hz'].set(str(objectives[index].get('frequency_hz','')))
         axis=self.chart_vars['slice'].get()
         dimension=next((d for d in options.get('dimensions',[]) if axis in d.get('names',[])),{})
@@ -1387,7 +1551,7 @@ class EMXPage(ttk.Frame):
         frequencies=options.get('frequencies_hz',[])
         if config.get('mode')!='optimize' or not goals or not frequencies:
             messagebox.showerror('Chart','Optimization, a goal and a frequency are required.',parent=self);return
-        goal_axes=list(dict.fromkeys((g['metric'],g.get('frequency_hz')) for g in goals))
+        goal_axes=list(dict.fromkeys((metric_key(g),g.get('frequency_hz')) for g in goals))
         if len(goal_axes)>=2: axes=goal_axes
         else:
             try: frequency=float(self.chart_vars['y_frequency_hz'].get())
@@ -1723,8 +1887,8 @@ class EMXPage(ttk.Frame):
         config=getattr(self.campaign,'config',{}) or {}
         goals=config.get('objectives') or []
         if index < 0 or index >= len(goals):return 'Objective %s' % (index+1)
-        goal=goals[index];metric=str(goal.get('metric') or 'Objective %s' % (index+1))
-        unit=' (nH)' if metric in ('L','Lp','Ls') else ''
+        goal=goals[index];metric=str(metric_key(goal) or 'Objective %s' % (index+1))
+        unit=_metric_unit(metric)
         frequency=goal.get('frequency_hz')
         try:frequency='%.6g Hz' % float(frequency)
         except (TypeError,ValueError):frequency='? Hz'

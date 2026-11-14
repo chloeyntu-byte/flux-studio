@@ -9,6 +9,13 @@ structure — transformers, single-ended or tapped inductors, baluns,
 stacked or interleaved windings, house-style variants of your own — plugs in
 as a **structure pack**.
 
+The structures shown in the Flux screenshots besides the differential
+inductor — the implicit coplanar transformer (direct and crossed leads), the
+single-ended octagonal inductor, the coplanar transformer and the stacked
+transformer — are each a **separate structure pack**. They are not part of this
+repository. If you need one of them, contact the maintainers through
+[GitHub Issues](https://github.com/chloeyntu-byte/flux-studio/issues).
+
 A model loaded from a pack is a first-class citizen. It appears in the Layout
 tab's model list and goes through the same pipeline as the built-in inductor:
 
@@ -153,6 +160,8 @@ user's permissions — install only packs you trust.
 ## 中文说明
 
 Flux Studio 把**流程**和**结构**分开。开源版只内置一种结构：对称**差分电感**（可选真实中心抽头 TAP）。其他结构，包括变压器、单端或抽头电感、巴伦、叠层或交织绕组，以及你自己的结构变体，都以**结构包**的形式接入。
+
+Flux 截图中除差分电感以外的结构，即隐式共面变压器（直连与交叉引线两种）、单端八边形电感、共面变压器和叠层变压器，各自是**独立的结构包**，不随本仓库提供。如需使用，请通过 [GitHub Issues](https://github.com/chloeyntu-byte/flux-studio/issues) 联系维护者。
 
 从结构包加载的模型和内置电感地位相同：在 Layout 页的模型列表里出现，按结构包的参数表自动生成参数面板，自动带上共享的 PGS、地环和接地走线参数，走同一套几何检查（网格对齐、原生过孔阵列、线宽和间距规则、短路和断线、规则缺失警告），之后同样可以生成原生 OA 版图、跑 EMX 扫参和 NSGA-II 优化、查看结果表和图表，并交给 SNPFit 拟合。
 

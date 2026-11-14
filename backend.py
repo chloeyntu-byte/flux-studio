@@ -8,6 +8,7 @@ import re
 import threading
 
 import geometry
+import leg_pins
 from cadence import ROOT, NAME, write_cell
 from structures import MODEL_DEFINITIONS, generate_model
 from technology import load_technology, drawing_grid, missing_rule_warnings
@@ -184,9 +185,13 @@ def normalize_design(design):
     structure = design.get('structure', variants[0]) if variants else 'layout'
     if variants and structure not in variants:
         raise ValueError('Unsupported routing variant for this model.')
-    return {'model': model, 'structure': structure, 'library': design.get('library', ''),
-            'cell': design.get('cell', ''), 'parameters': parameters,
-            'layers': {role: copy.deepcopy(layers[role]) for role in definition['layer_roles'] if role in layers}}
+    normalized = {'model': model, 'structure': structure, 'library': design.get('library', ''),
+                  'cell': design.get('cell', ''), 'parameters': parameters,
+                  'layers': {role: copy.deepcopy(layers[role]) for role in definition['layer_roles'] if role in layers}}
+    pins = leg_pins.normalize_layout(design.get('leg_pins'))
+    if pins:
+        normalized['leg_pins'] = pins
+    return normalized
 
 
 def register_library(name, workspace, cds_lib=None):
@@ -322,6 +327,8 @@ def _preview_entry(normalized, entry):
     result = builder(copy.deepcopy(normalized['parameters']), layers, entry['_tech'], variant)
     if not isinstance(result, dict) or not isinstance(result.get('geometry'), dict):
         raise ValueError('The %s geometry builder returned an invalid result.' % normalized['model'])
+    if normalized.get('leg_pins') and result.get('ok'):
+        leg_pins.apply_layout(result, normalized['leg_pins'], drawing_grid(entry['_tech']))
     selected = {metal for role, metal in layers.items() if geometry.shielding_role_active(role, normalized['parameters'])}
     for warning in entry.get('warnings', missing_rule_warnings(entry['_tech'], selected)):
         if warning.get('layer') and warning['layer'] not in selected:
@@ -389,7 +396,16 @@ def capture_generation_context(design, expected_library=None):
             fields.append(dict(name='layers.' + role, label=role.replace('_', ' ').title() + ' metal',
                                part='layers', type='enum', options=[item['name'] for item in entry['layers']],
                                current=normalized['layers'].get(role)))
+        layout = normalized.get('leg_pins')
+        try:
+            built = _preview_entry(copy.deepcopy(normalized), entry)
+            pins = leg_pins.signal_pin_names(built['geometry']) if built.get('ok') else None
+        except Exception:
+            pins = None
+        if pins is None:
+            pins = leg_pins.layout_pin_names(layout)
         return copy.deepcopy(dict(schema='flux.emx.source.v1', design=normalized,
+                                  pins=pins, custom_pins=leg_pins.requires_pin_mapping(layout),
                                   definition=definition, fields=fields, library=entry,
                                   runtime=RUNTIME, identity=identity))
     finally:

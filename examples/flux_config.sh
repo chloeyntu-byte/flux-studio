@@ -38,3 +38,9 @@
 
 # Optional SNPFit Studio location. By default Flux uses its bundled SNPFit launcher.
 # export TFGEN_SNPFIT_ROOT="../snpfit_studio"
+
+# Optional 3D preview (Layout 3D Viewer).  Leave empty to keep the 2D preview only.
+# FLUX_VL3D_ROOT: a Layout 3D Viewer checkout; FLUX_VL3D_PYTHONPATH: optional folder
+# holding PyOpenGL 3.1.7 and pyopengltk 0.0.4 for the Python that runs Flux.
+export FLUX_VL3D_ROOT="${FLUX_VL3D_ROOT:-}"
+export FLUX_VL3D_PYTHONPATH="${FLUX_VL3D_PYTHONPATH:-}"

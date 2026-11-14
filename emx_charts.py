@@ -6,7 +6,7 @@ slice and slice_value for a three-dimensional sweep.  IDs remain attached
 """
 import math
 
-from emx_search import SearchSpace
+from emx_search import SearchSpace, metric_specs, parse_metric_key
 
 METRICS = ('L', 'Q', 'Lp', 'Ls', 'k', 'Qp', 'Qs')
 
@@ -46,9 +46,13 @@ def axis_options(source, config, rows):
     frequencies.update(f for f in config.get('emx', {}).get('frequencies_hz', []) if _finite(f))
     frequencies.update(o['frequency_hz'] for o in config.get('objectives', []) if _finite(o.get('frequency_hz')))
     allowed = (source or {}).get('definition', {}).get('emx_metrics') or METRICS
+    # Pin-assigned goals (``Lp[pin_1,pin_2]``) add their own metric keys; a
+    # custom leg-pin layout has no default winding pairs, so only those remain.
+    pinned = [spec['key'] for spec in metric_specs(config.get('objectives') or [], config.get('constraints') or [])]
+    plain = [] if (source or {}).get('custom_pins') and pinned else [m for m in METRICS if m in allowed]
     return {'mode': config.get('mode', 'sweep'), 'dimensions': dimensions,
             'parameters': [n for d in dimensions for n in d['names']],
-            'metrics': [m for m in METRICS if m in allowed],
+            'metrics': plain + pinned,
             'frequencies_hz': sorted(frequencies), 'objectives': list(config.get('objectives') or [])}
 
 
@@ -71,7 +75,7 @@ def _front(rows, count):
 
 
 def _label(name, frequency):
-    unit = 'nH' if name in ('L', 'Lp', 'Ls') else 'dimensionless'
+    unit = 'nH' if parse_metric_key(name)[0] in ('L', 'Lp', 'Ls') else 'dimensionless'
     return '%s (%s) @ %s Hz' % (name, unit, frequency)
 
 

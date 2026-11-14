@@ -38,8 +38,9 @@ def _measurement(row, goal):
 
 
 def _goal_label(goal):
-    metric = goal['metric']
-    inductance = metric in ('L', 'Lp', 'Ls')
+    from emx_search import metric_key
+    metric = metric_key(goal)
+    inductance = goal['metric'] in ('L', 'Lp', 'Ls')
     frequency = goal['frequency_hz'] / 1e9
     direction = goal['direction'].capitalize()
     if direction == 'Target':

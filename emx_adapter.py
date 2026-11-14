@@ -1240,10 +1240,36 @@ def _inverse(matrix):
     return [row[n:] for row in a]
 
 
-def summarize_network(network, ports):
-    """Open-circuit differential winding L/Q and signed mutual coupling."""
+def _pin_metric(z, omega, metric, idx):
+    def pair(a, b):
+        return z[a][a] + z[b][b] - z[a][b] - z[b][a]
+    if metric == 'k':
+        p, q, r, t = idx
+        z1, z2 = pair(p, q), pair(r, t)
+        l1, l2 = z1.imag / omega, z2.imag / omega
+        zm = z[p][r] - z[p][t] - z[q][r] + z[q][t]
+        return (zm.imag / omega) / math.sqrt(l1 * l2) if l1 > 0 and l2 > 0 else None
+    zd = pair(*idx)
+    if metric in ('L', 'Lp', 'Ls'):
+        return zd.imag / omega * 1e9
+    return zd.imag / zd.real if zd.real != 0 else None
+
+
+def summarize_network(network, ports, metric_specs=None):
+    """Open-circuit differential winding L/Q and signed mutual coupling.
+
+    ``metric_specs`` (``[{key, metric, pins}]``) adds metrics on explicitly
+    chosen pins; they appear per sample under ``pin_metrics`` (L in nH).
+    """
     n = network['port_count']
     indices = {name: i for i, name in enumerate(ports['signals'])}
+    specs, spec_errors = [], {}
+    for spec in metric_specs or []:
+        missing = [pin for pin in spec['pins'] if pin not in indices]
+        if missing:
+            spec_errors[spec['key']] = 'pins %s are not driven signal pins of this network' % ', '.join(missing)
+        else:
+            specs.append((spec['key'], spec['metric'], [indices[pin] for pin in spec['pins']]))
     pairs = {}
     for terminal in ports['terminals']:
         if terminal['name'] in indices and terminal.get('winding') and terminal.get('endpoint') in ('positive', 'negative'):
@@ -1270,10 +1296,13 @@ def summarize_network(network, ports):
             lp, ls = row['windings']['P']['inductance_h'], row['windings']['S']['inductance_h']
             mutual = zm.imag / omega
             row.update(mutual_inductance_h=mutual, coupling_k=mutual / math.sqrt(lp * ls) if lp > 0 and ls > 0 else None)
+        if specs:
+            row['pin_metrics'] = {key: _pin_metric(z, omega, metric, idx) for key, metric, idx in specs}
         rows.append(row)
     return dict(definition='Z differential winding pairs, every other signal/TAP open; ' +
                 (('fixed Ground pins remain zero' if ports['grounds'] else 'no physical Ground pins; implicit proc stack-bottom reference') if ports['protocol'] == 'fixed_ground_pins' else 'the explicit local-return pin protocol is retained'),
-                signal_order=ports['signals'], ground_protocol=ports['protocol'], samples=rows)
+                signal_order=ports['signals'], ground_protocol=ports['protocol'], samples=rows,
+                **({'pin_metric_errors': spec_errors} if spec_errors else {}))
 
 
 def run_job(job, runtime, cancel_event=None):
@@ -1291,7 +1320,7 @@ def run_job(job, runtime, cancel_event=None):
         job['tool_version'] = (Path(job['run_dir']) / 'version-console.log').read_text(encoding='utf-8', errors='replace').strip()[:4096]
         _run_stage(job, 'emx', job['emx_argv'], runtime, job['resources']['timeout_seconds'], cancel_event)
         network = read_touchstone(job['outputs']['touchstone'], len(job['ports']['signals']), job['frequencies_hz'])
-        summary = summarize_network(network, job['ports'])
+        summary = summarize_network(network, job['ports'], job.get('metric_specs'))
         job.update(status='completed', completed_utc=_utc(), network_summary=summary,
                    output_sha256={key: _hash(path) for key, path in job['outputs'].items()})
         if any(value['inductance_h'] <= 0 or value['resistance_ohms'] <= 0

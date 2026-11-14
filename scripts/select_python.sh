@@ -23,7 +23,7 @@ tfgen_load_config() {
     local tfgen_complete=no tfgen_part tfgen_remaining tfgen_normalized tfgen_origin
     local -A tfgen_inherited_values=() tfgen_inherited_present=()
     local -A tfgen_config_values=() tfgen_config_present=()
-    local -a tfgen_config_keys=(TFGEN_PYTHON TFGEN_VIRTUOSO TFGEN_CADENCE_ENV TFGEN_WORKSPACE TFGEN_DESIGN_ROOT TFGEN_CDS_LIB TFGEN_RUN_USER TFGEN_PYTHON_LD_LIBRARY_PATH TFGEN_PYTHONHOME TFGEN_PYTHONPATH TFGEN_TCL_LIBRARY TFGEN_TK_LIBRARY TFGEN_EMX TFGEN_EMX_CONFIG TFGEN_EMX_PROCESS TFGEN_EMX_LAYER_MAP TFGEN_STRMOUT TFGEN_SNPFIT_ROOT)
+    local -a tfgen_config_keys=(TFGEN_PYTHON TFGEN_VIRTUOSO TFGEN_CADENCE_ENV TFGEN_WORKSPACE TFGEN_DESIGN_ROOT TFGEN_CDS_LIB TFGEN_RUN_USER TFGEN_PYTHON_LD_LIBRARY_PATH TFGEN_PYTHONHOME TFGEN_PYTHONPATH TFGEN_TCL_LIBRARY TFGEN_TK_LIBRARY TFGEN_EMX TFGEN_EMX_CONFIG TFGEN_EMX_PROCESS TFGEN_EMX_LAYER_MAP TFGEN_STRMOUT TFGEN_SNPFIT_ROOT FLUX_VL3D_ROOT FLUX_VL3D_PYTHONPATH)
     tfgen_python_override_source=automatic
     for tfgen_key in "${tfgen_config_keys[@]}"; do
         if [[ -v "$tfgen_key" ]]; then
@@ -105,7 +105,7 @@ TFGEN_CONFIG_CHILD
         fi
         if [[ -v "$tfgen_key" && "$tfgen_key" != TFGEN_RUN_USER ]]; then
             case "$tfgen_key" in
-                TFGEN_PYTHON_LD_LIBRARY_PATH|TFGEN_PYTHONPATH)
+                TFGEN_PYTHON_LD_LIBRARY_PATH|TFGEN_PYTHONPATH|FLUX_VL3D_PYTHONPATH)
                     tfgen_remaining="${!tfgen_key}"
                     tfgen_normalized=
                     if [[ -n "$tfgen_remaining" ]]; then

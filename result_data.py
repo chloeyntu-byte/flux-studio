@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 
-def hydrate_row(row):
+def hydrate_row(row, metric_specs=None):
+    """``metric_specs`` adds pin-assigned metrics (see emx_search.metric_specs)."""
     result = copy.deepcopy(row)
     if result.get('status') != 'completed':
         result['metrics'] = []
@@ -31,7 +32,10 @@ def hydrate_row(row):
         from emx_campaign import _metrics
         ports = network['ports']
         parsed = read_touchstone(path, len(ports['signals']), network['frequencies_hz'])
-        result['metrics'] = _metrics(summarize_network(parsed, ports))
+        summary = summarize_network(parsed, ports, metric_specs)
+        result['metrics'] = _metrics(summary)
+        if summary.get('pin_metric_errors'):
+            result['pin_metric_errors'] = summary['pin_metric_errors']
         after = path.stat()
         if (before.st_ino, before.st_size, getattr(before, 'st_mtime_ns', before.st_mtime)) != (after.st_ino, after.st_size, getattr(after, 'st_mtime_ns', after.st_mtime)):
             raise ValueError('SNP changed while reading')

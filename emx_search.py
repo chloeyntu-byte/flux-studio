@@ -2,6 +2,7 @@
 import copy
 import itertools
 import math
+import re
 import random
 
 _MAX_AXIS_POINTS = 10000
@@ -169,7 +170,8 @@ def evaluate_response(response, objectives, constraints):
         matches = [row for row in response if abs(_finite(row.get('frequency_hz'), 'response frequency') - freq) <= max(abs(freq) * 1e-12, 1e-12)]
         if len(matches) != 1:
             raise ValueError('frequency %s is missing or ambiguous' % freq)
-        return _finite(matches[0].get(spec.get('metric')), 'metric %s' % spec.get('metric'))
+        key = metric_key(spec)
+        return _finite(matches[0].get(key), 'metric %s' % key)
     scores, raw = [], []
     for spec in objectives:
         value = measurement(spec)
@@ -392,3 +394,56 @@ class Optimizer:
         elif valid:
             self.parents = _select(self.parents + valid, self.population)
         self.pending = None
+
+
+# Metrics that can be evaluated on explicitly chosen pins, and how many pins
+# each needs: a differential pair (+, -) for L/Q, two pairs for coupling k.
+PIN_METRIC_COUNTS = {'L': 2, 'Q': 2, 'Lp': 2, 'Ls': 2, 'Qp': 2, 'Qs': 2, 'k': 4}
+_KEY = re.compile(r'^([A-Za-z]+)\[([A-Za-z][A-Za-z0-9_]*(?:,[A-Za-z][A-Za-z0-9_]*)*)\]$')
+
+
+def metric_key(spec):
+    """Response column for a goal: ``Lp`` or ``Lp[pin_1,pin_2]``."""
+    pins = spec.get('pins')
+    if not pins:
+        return spec.get('metric')
+    return '%s[%s]' % (spec.get('metric'), ','.join(pins))
+
+
+def parse_metric_key(text):
+    """``'Lp[a,b]'`` -> ``('Lp', ['a', 'b'])``; plain names -> ``(name, None)``."""
+    text = str(text).strip().replace(' ', '')
+    match = _KEY.match(text)
+    if not match:
+        return text, None
+    return match.group(1), match.group(2).split(',')
+
+
+def check_pins(metric, pins, available=None):
+    """Validate an explicit pin assignment; returns the pin list."""
+    if metric not in PIN_METRIC_COUNTS:
+        raise ValueError('Metric %s cannot be assigned to pins.' % metric)
+    count = PIN_METRIC_COUNTS[metric]
+    if not isinstance(pins, (list, tuple)) or len(pins) != count or not all(isinstance(p, str) and p for p in pins):
+        raise ValueError('%s needs %d pins (%s).' % (metric, count, '+, -' if count == 2 else 'pair 1 +, -, pair 2 +, -'))
+    if count == 2 and pins[0] == pins[1]:
+        raise ValueError('%s needs two different pins.' % metric)
+    if count == 4 and (pins[0] == pins[1] or pins[2] == pins[3]):
+        raise ValueError('k needs two different pins in each pair.')
+    if available is not None:
+        missing = [p for p in pins if p not in available]
+        if missing:
+            raise ValueError('Pins %s are not in the layout (available: %s).' % (', '.join(missing), ', '.join(available)))
+    return list(pins)
+
+
+def metric_specs(objectives, constraints):
+    """Distinct pin-assigned metrics used by the goals, for network summaries."""
+    result, seen = [], set()
+    for spec in list(objectives or []) + list(constraints or []):
+        if spec.get('pins'):
+            key = metric_key(spec)
+            if key not in seen:
+                seen.add(key)
+                result.append(dict(key=key, metric=spec['metric'], pins=list(spec['pins'])))
+    return result

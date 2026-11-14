@@ -51,7 +51,7 @@ def _counts(rows):
             for state in ('completed', 'failed', 'rejected', 'cancelled')}
 
 
-def _validate_goals(objectives, constraints, supported):
+def _validate_goals(objectives, constraints, supported, pin_names=None, require_pins=False):
     def number(value, field, positive=False):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (positive and value <= 0):
             raise ValueError('{} must be a {}finite number.'.format(field, 'positive ' if positive else ''))
@@ -61,7 +61,11 @@ def _validate_goals(objectives, constraints, supported):
             metric = spec.get('metric')
             if not isinstance(metric, str) or not metric:
                 raise ValueError('{} metric is required.'.format(kind))
-            if supported is not None and metric not in supported:
+            if spec.get('pins'):
+                emx_search.check_pins(metric, spec['pins'], pin_names)
+            elif require_pins:
+                raise ValueError('The layout uses custom leg pins; assign pins to {} {}.'.format(kind, metric))
+            if supported is not None and metric not in supported and not spec.get('pins'):
                 raise ValueError('{} metric {} is unavailable for this model; choose {}.'.format(kind, metric, ', '.join(supported)))
             number(spec.get('frequency_hz'), kind + ' frequency', positive=True)
             number(spec.get('scale', 1), kind + ' scale', positive=True)
@@ -102,6 +106,9 @@ def _metrics(summary):
                     row['Q' + prefix] = winding['q']
         if sample.get('coupling_k') is not None:
             row['k'] = sample['coupling_k']
+        for key, value in (sample.get('pin_metrics') or {}).items():
+            if value is not None:
+                row[key] = value
         rows.append(row)
     return rows
 
@@ -166,7 +173,8 @@ class Campaign:
             raise ValueError('Campaign concurrency must be 1 or 2.')
         self.concurrency = concurrency
         _validate_goals(self.config.get('objectives', []), self.config.get('constraints', []),
-                        self.source.get('definition', {}).get('emx_metrics'))
+                        self.source.get('definition', {}).get('emx_metrics'),
+                        self.source.get('pins'), bool(self.source.get('custom_pins')))
         self.emx = copy.deepcopy(self.config.get('emx', {}))
         self.settings = emx_adapter.resolve_settings(self.emx)
         frequencies = self.emx.get('frequencies_hz', [])
@@ -360,6 +368,7 @@ class Campaign:
             self._event('state', stage='export', message='{}: verifying source and exporting layout'.format(identifier))
             job_dir = Path(self.output_dir) / identifier
             job = backend.prepare_emx_job(generated, overrides=self.emx, run_dir=job_dir, source_context=self.source)
+            job['metric_specs'] = emx_search.metric_specs(self.config.get('objectives', []), self.config.get('constraints', []))
             row['source'] = {k: job['source'][k] for k in ('library', 'cell', 'view', 'technology', 'workspace', 'cds_lib', 'library_path')}
             row['job_dir'] = str(job_dir)
             emx_adapter.export_layout(job, self.source['runtime'], self.cancel_event)
@@ -386,7 +395,8 @@ class Campaign:
             self._event('state', stage='solver', message='{}: running EMX solver'.format(row['id']))
             emx_adapter.run_job(job, self.source['runtime'], self.cancel_event)
             row['metrics'] = _metrics(job['network_summary'])
-            row['warnings'] = _merge_warnings(row['warnings'], job.get('warnings'))
+            row['warnings'] = _merge_warnings(row['warnings'], job.get('warnings'),
+                ['Pin metric %s unavailable: %s' % item for item in sorted((job['network_summary'].get('pin_metric_errors') or {}).items())])
             name = _snp_name(self.source, row, len(job['ports']['signals']))
             destination = Path(self.output_dir) / 'results' / name
             shutil.copyfile(job['outputs']['touchstone'], str(destination))

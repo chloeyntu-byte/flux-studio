@@ -4,18 +4,114 @@
 
 Parametric RF inductor and transformer layouts, EMX campaigns, and equivalent-circuit fitting in one desktop workspace. Structures are pluggable: the differential inductor is built in, and any other structure loads as a **structure pack**.
 
-![Flux Studio with a fictional generic layout](docs/screenshots/flux-example.png)
+![Flux Studio: built-in differential inductor with centre TAP, PGS and ground ring](docs/screenshots/flux-example.png)
 
-*The screenshots include structures (such as the coplanar transformer above) that are provided by structure packs rather than by this repository.*
+*The built-in differential inductor with centre TAP, patterned ground shield and ground ring, on the fictional example technology.*
 
 ## What it does
 
 - Preview and generate a symmetric differential inductor (optional centre TAP) out of the box, with optional patterned ground shield and ground ring.
 - Load further structures — transformers, single-ended or tapped inductors, baluns, your own variants — as [structure packs](docs/STRUCTURE_PACKS.md). Pack models get the same parameter panel, rule checks, native generation, EMX, optimization and SNPFit hand-off as the built-in inductor.
+- Place your own pins along the terminal leads with the **Leg Pin manager**, and point every EMX objective or constraint at the pins it should be measured between.
+- Look at the applied layout in **3D** next to the 2D editor (optional, through [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer)).
 - Read user technology JSON for offline geometry, or discover the technology attached to a user-owned OA design library for native layout generation.
 - Configure EMX, sweep typed parameters, optimize multiple objectives, inspect candidate tables, heatmaps, surfaces and retained SNP results.
-- Open selected results in the bundled **SNPFit Studio**, or launch it independently to fit explicit RLC(K) circuits to Touchstone data.
-- Inspect original and fitted L/Q/k curves, circuit diagrams, staged tuning and structure upgrades; export numerical results and SPICE models.
+- Open selected results in the bundled **SNPFit Studio**, or launch it independently to fit explicit RLC(K) circuits to Touchstone data; export numerical results and SPICE models.
+
+## Built-in structure and structure packs
+
+The open-source edition contains **one** built-in structure: the symmetric **differential inductor** with optional centre TAP. Each of the other inductor and transformer structures Flux has been used with — the implicit coplanar transformer (direct and crossed leads), the single-ended octagonal inductor, the coplanar transformer and the stacked transformer — is a **separate structure pack**. These packs are not shipped with this repository. If you need one, please contact the maintainers through [GitHub Issues](https://github.com/chloeyntu-byte/flux-studio/issues). You can also write your own pack; see [Structure packs](#structure-packs) below.
+
+![Structure gallery: the built-in differential inductor and five structure-pack layouts](docs/screenshots/flux-structures.png)
+
+*Top left: built-in differential inductor. All other tiles are **structure packs** (not included): implicit coplanar 1:1 with direct and crossed leads, octagonal inductor with TAP, coplanar transformer, stacked transformer.*
+
+![The same structures in the optional 3D preview](docs/screenshots/flux-structures-3d.png)
+
+*The same six layouts in 3D Studio. Everything except the top-left tile is a **structure pack** (not included).*
+
+## Feature tour
+
+### Layout preview and shielding
+
+Every parameter edit is validated by the same geometry core that writes the final layout. **Apply Parameters** redraws the preview, lists rule warnings and keeps the view in sync with the stored design.
+
+![Parameters change, the geometry follows](docs/screenshots/flux-param-morph.gif)
+
+*Inner diameter, turns and width change; the winding, crossovers, centre TAP, PGS and ground ring are regenerated each time (built-in differential inductor).*
+
+The patterned ground shield (PGS) and the ground ring are independent, optional parts with their own metal, size and connection settings:
+
+![PGS and ground ring on (left) and off (right)](docs/screenshots/flux-shields.png)
+
+### Optional 3D preview
+
+The 2D/3D selector on the preview toolbar switches between the 2D editor, **3D Studio** (solid metals) and **3D Metal** (metal-coloured layers with the PGS fingers visible). Every applied preview, including leg-pin edits, is pushed to the 3D view.
+
+![3D Studio view of the differential inductor](docs/screenshots/flux-3d-studio.png)
+
+![3D view rotating](docs/screenshots/flux-3d-rotate.gif)
+
+![3D Metal view](docs/screenshots/flux-3d-metal.png)
+
+![Stacked transformer in 3D Metal — structure pack, not included](docs/screenshots/flux-pack-stacked-3d.png)
+
+*Stacked transformer in 3D Metal. This structure is a **structure pack** and is not part of the repository.*
+
+**3D needs Layout 3D Viewer.** The preview uses the embedding interface of [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer): Flux imports its `native/embed.py` module, whose contract is described in that repository's [docs/EMBEDDING.md](https://github.com/chloeyntu-byte/layout-3d-viewer/blob/main/docs/EMBEDDING.md). Use the latest version of Layout 3D Viewer.
+
+```sh
+git clone https://github.com/chloeyntu-byte/layout-3d-viewer.git /path/to/layout-3d-viewer
+# the Python that runs Flux needs PyOpenGL 3.1.7 and pyopengltk 0.0.4;
+# installing them into a separate folder keeps that interpreter unchanged
+python3 -m pip install --target /path/to/flux-gl PyOpenGL==3.1.7 pyopengltk==0.0.4
+
+export FLUX_VL3D_ROOT=/path/to/layout-3d-viewer     # the Layout 3D Viewer checkout
+export FLUX_VL3D_PYTHONPATH=/path/to/flux-gl        # optional: the folder above
+python3 -B app.py --example
+```
+
+- Without `FLUX_VL3D_ROOT` Flux has the 2D preview only and behaves exactly as before; no 3D selector is shown.
+- With a conda or miniforge Python, use the latest Layout 3D Viewer: its `prepare_runtime()`, which Flux calls before Tk starts, loads the system GL libraries so Tk and OpenGL share one X11 stack.
+- `./launch.sh` passes both variables through, and they can also be set in `flux_config.sh` (see `examples/flux_config.sh`).
+- If the 3D engine cannot be loaded or OpenGL fails when the view first opens, Flux reports the reason in the status line and stays in 2D.
+
+### Leg Pin manager
+
+**Leg Pins** on the preview toolbar turns the Layout page into a pin editor for the terminal leads ("legs"). Everything except the legs is dimmed and pins are drawn in one bright colour; the left panel lists every leg with its pins, their distance from the free end and their length.
+
+![Leg Pin manager with several renamed pins](docs/screenshots/flux-leg-pins.png)
+
+- Click a leg to mark an insert point, then **Add pin** (1 µm long, as wide as the leg). Several pins per leg are allowed; a leg can also be left without a pin.
+- Drag a pin to move it along its own leg (Esc cancels the drag); double-click or **Rename** to rename it; **Delete** removes it; **Default for leg / Default for all** restore the generated pins.
+- Positions are stored as a fraction of the leg length, so when a sweep changes the lead extension every pin keeps its relative position.
+- Pins with the same name form one shorted EMX terminal (Flux asks first). Names that would join two windings, mix signal and TAP pins, or reuse the ground pin names are refused.
+- The pin layout is saved with design JSON, presets and EMX campaigns. A layout identical to the defaults is not stored.
+
+![Dragging a pin along its leg](docs/screenshots/flux-pin-drag.gif)
+
+![Lead extension sweeps: pins keep their relative position](docs/screenshots/flux-leg-scale.gif)
+
+*Left: a pin dragged along its leg. Right: as the lead extension grows and shrinks, every pin keeps its fraction of the leg length.*
+
+With the 3D preview enabled, Leg Pins puts the 2D editor and the 3D view side by side; the selected pin is marked in 3D, and clicking a pin in 3D selects it in the editor (repeated clicks step through pins that share a name).
+
+![Leg Pins next to the 3D view](docs/screenshots/flux-leg-pins-3d.png)
+
+### EMX metrics on chosen pins
+
+Objectives and constraints can name the pins a metric is measured between. In the goal editor, L, Q, Lp, Ls, Qp and Qs take a differential pair (+, −; all other signal pins are left open) and k takes two pairs. The goal is written as `L[rf_in,rf_out]`, also in the advanced text form (`L[rf_in,rf_out], 2e9, maximize`).
+
+![EMX goals assigned to custom pins, with one result column per pin metric](docs/screenshots/flux-emx-pins.png)
+
+- The same metric on different pins is a different goal, and the results table, charts and optimization video get one column per pin-assigned metric.
+- Without custom pins, leaving the pins blank keeps the built-in winding pair. Once a layout uses custom leg pins, every metric must name its pins; goals whose pins no longer exist in the synced layout are shown in red.
+
+### Results
+
+![Sweep results: Qp heatmap from the synthetic ideal-circuit replay](docs/screenshots/flux-results.png)
+
+*Synthetic replay of nine ideal coupled-inductor SNPs (see Quick start); not an EM prediction.*
 
 ## Requirements
 
@@ -119,7 +215,7 @@ DISPLAY=:88 python3 -B -m unittest discover -s tests
 DISPLAY=:88 SNPFIT_GUI_TESTS=1 python3 -B -m unittest discover -s tests_snpfit
 ```
 
-Use your own private X display when reproducing these checks. All included technology, winding references and SNP fixtures are synthetic. The retained suites cover geometry, process ownership, environment isolation, integration contracts, numerical fitting and GUI state; native tools are mocked. See [release notes](RELEASE_NOTES.md) and [screenshots](docs/screenshots/README.md).
+Use your own private X display when reproducing these checks. The 3D tests use a stand-in engine and need no OpenGL. All included technology, winding references and SNP fixtures are synthetic. The retained suites cover geometry, process ownership, environment isolation, integration contracts, numerical fitting and GUI state; native tools are mocked. See [release notes](RELEASE_NOTES.md) and [screenshots](docs/screenshots/README.md). Current counts: Flux 506 tests, SNPFit 164 tests (3 skipped).
 
 ## Limitations
 

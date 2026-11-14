@@ -1,3 +1,16 @@
+# Flux Studio v1.2.0
+
+Leg pins, EMX metrics on chosen pins, and an optional 3D preview.
+
+- **Leg Pin manager.** The **Leg Pins** button turns the Layout page into a pin editor for the terminal leads: add several named pins per leg, drag them along the leg, rename, delete, and restore the defaults per leg or for the whole layout. Pins are stored as a fraction of the leg length, so they follow lead-extension sweeps. Same-named pins form one EMX terminal; names that would join two windings, mix signal and TAP pins or reuse ground pins are refused.
+- **EMX metrics on chosen pins.** Objectives and constraints can name their pins, e.g. `L[rf_in,rf_out]` or `k[a,b,c,d]`. The same metric on different pins is a different goal; tables, charts and optimization videos add one column per pin-assigned metric. Layouts with custom leg pins must assign pins to every metric.
+- **Optional 3D preview.** With `FLUX_VL3D_ROOT` pointing at a [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer) checkout (its `native/embed.py` interface, see its `docs/EMBEDDING.md`) and PyOpenGL 3.1.7 / pyopengltk 0.0.4 available (optionally through `FLUX_VL3D_PYTHONPATH`), the preview offers 2D, 3D Studio and 3D Metal; in Leg Pins mode 2D and 3D sit side by side. Use the latest Layout 3D Viewer, which prepares the system GL libraries under conda Pythons. Without `FLUX_VL3D_ROOT` Flux stays 2D only and unchanged.
+- The open-source edition still builds only the differential inductor. Other structures shown in the screenshots are separate structure packs, not included; ask through [GitHub Issues](https://github.com/chloeyntu-byte/flux-studio/issues) if you need one.
+
+Validation: Flux suite 506 tests passed, SNPFit suite 164 passed (3 skipped), on Linux with Python 3.11 and a private X display. The new tests use the built-in differential inductor (TAP on/off, several turns), the example structure pack and a synthetic two-winding test model; the 3D tests use a stand-in engine. The real 3D preview was checked with Layout 3D Viewer on the example technology. Native tools remain mocked.
+
+---
+
 # Flux Studio v1.1.0
 
 Structures become pluggable. The open-source edition keeps one built-in structure, the symmetric **differential inductor** with optional centre TAP, and loads every other structure as a **structure pack**.

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """Native Tk UI. The backend alone computes and writes layout geometry."""
-import fieldwork_tk as fw
-from fieldwork_ui import bind_status
 import datetime
 import argparse
 import copy
@@ -12,13 +10,46 @@ import os
 from pathlib import Path
 import queue
 import re
+import sys
 import threading
 import traceback
+
+# Optional 3D preview (Layout 3D Viewer).  Off unless FLUX_VL3D_ROOT names a VL3D
+# checkout; FLUX_VL3D_PYTHONPATH may add a private folder holding PyOpenGL and
+# pyopengltk.  prepare_runtime() must run before tkinter is imported.
+embed = None
+EMBED_NOTE = 'FLUX_VL3D_ROOT is not set'
+
+
+def _load_embed():
+    global embed, EMBED_NOTE
+    root = os.environ.get('FLUX_VL3D_ROOT', '').strip()
+    if not root:
+        return
+    if not os.path.isdir(root):
+        EMBED_NOTE = 'FLUX_VL3D_ROOT is not a folder: ' + root
+        return
+    for path in [root] + [p for p in os.environ.get('FLUX_VL3D_PYTHONPATH', '').split(os.pathsep) if p.strip()]:
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    try:
+        from native import embed as module
+        module.prepare_runtime()
+        embed, EMBED_NOTE = module, ''
+    except Exception as exc:  # 3D stays off; Flux keeps its 2D preview.
+        embed, EMBED_NOTE = None, '3D preview could not be loaded: {}'.format(exc)
+
+
+_load_embed()
+VIEW_MODES = ('2D', '3D Studio', '3D Metal')
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+import fieldwork_tk as fw
+from fieldwork_ui import bind_status
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter import font as tkfont
 
 from geometry import shielding_parameter_active, shielding_role_active, shielding_state
+import leg_pins
 
 ROOT = Path(__file__).resolve().parent
 PIN_LABEL_FONT = ('liberation sans', -8)  # Fixed pixels: discreet at every Tk DPI.
@@ -54,6 +85,96 @@ LABELS = dict(inner_diameter='Inner opening diameter', width='Winding width', sp
               pgs_spine_width='Spine width', ring_extent='Ring inner half-size', ring_width='Ring width',
               ground_route_width='Ground route width', center_tap='Include center TAP',
               rule_policy='PDK rule checking')
+# Leg Pin manager: everything except legs is dimmed; pins use one loud color.
+CANVAS_BG = fw.PLOT_BG
+LEG_PIN_COLOR = '#ff5fd2'
+LEG_PIN_SELECTED = '#ffffff'
+LEG_SELECTED_COLOR = '#ffe27a'
+LEG_CLICK_COLOR = '#7dfcff'
+RESERVED_PIN_NAMES = ('GND_PGS', 'GND_RING')
+LEG_PIN_MIN_PIXELS = 7
+
+
+def dim_color(color, keep=0.3, background=CANVAS_BG):
+    """Blend a #rrggbb color toward the canvas background."""
+    try:
+        source = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+        target = [int(background[i:i + 2], 16) for i in (1, 3, 5)]
+    except (TypeError, ValueError, IndexError):
+        return color
+    return '#{:02x}{:02x}{:02x}'.format(*(round(t + (s - t) * keep) for s, t in zip(source, target)))
+
+
+def preview_with_legs(design):
+    """Background preview that also reports the terminal legs.
+
+    Custom leg pins replace the default pins that identify legs, so the legs
+    are taken from the same design previewed without its leg-pin layout.
+    """
+    import backend
+    from technology import drawing_grid
+    result = backend.preview(design)
+    if not isinstance(result, dict):
+        return result
+    try:
+        entry = backend.LIBRARIES.get(design.get('library')) or {}
+        grid = entry.get('grid') or (drawing_grid(entry['_tech']) if entry.get('_tech') else 0.001)
+        base = result
+        if design.get('leg_pins'):
+            stripped = dict(design)
+            stripped.pop('leg_pins', None)
+            base = backend.preview(stripped)
+        geometry = base.get('geometry') if isinstance(base, dict) else None
+        if isinstance(geometry, dict) and geometry.get('ports'):
+            lines = leg_pins.legs(geometry, grid)
+            ids = {leg['id'] for leg in lines}
+            result.update(leg_lines=lines, leg_default=leg_pins.default_layout(geometry, grid), leg_grid=grid,
+                          leg_reserved=sorted({port['name'] for port in geometry['ports'] if port.get('name') not in ids}))
+    except Exception as exc:  # Leg discovery must never hide the real preview.
+        result['leg_lines_error'] = str(exc)
+    return result
+
+
+def leg_segments(centerline):
+    """Centerline segments walked from the free end: (start, end, a, b)."""
+    points = centerline[::-1]
+    rows, walked = [], 0.0
+    for a, b in zip(points, points[1:]):
+        span = math.hypot(b[0] - a[0], b[1] - a[1])
+        if span > 1e-12:
+            rows.append((walked, walked + span, a, b))
+        walked += span
+    return rows
+
+
+def leg_project(leg, x, y):
+    """(distance to centerline, distance from free end, segment) of the nearest point."""
+    best = None
+    for s0, s1, a, b in leg_segments(leg['centerline']):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        span = s1 - s0
+        t = max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / (span * span)))
+        px, py = a[0] + dx * t, a[1] + dy * t
+        distance = math.hypot(x - px, y - py)
+        if best is None or distance < best[0]:
+            best = (distance, s0 + t * span, (s0, s1))
+    return best
+
+
+def leg_point(leg, distance):
+    """World point at ``distance`` from the free end along the centerline."""
+    segments = leg_segments(leg['centerline'])
+    for s0, s1, a, b in segments:
+        if distance <= s1 or (s0, s1, a, b) == segments[-1]:
+            t = max(0.0, min(1.0, (distance - s0) / (s1 - s0)))
+            return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+    return tuple(leg['centerline'][-1])
+
+
+def same_pins(pins, reference):
+    return len(pins) == len(reference) and all(
+        pin['name'] == ref['name'] and abs(pin['ratio'] - ref['ratio']) <= 1e-9 and
+        abs(pin['length'] - ref['length']) <= 1e-6 for pin, ref in zip(pins, reference))
 
 
 def pin_annotations(geometry, layer_visible, xy, width, height):
@@ -246,6 +367,25 @@ class TransformerApp:
         self.last_job = ''
         self.generated_target = None
         self.preset_busy = False
+        self.preview_errors = []
+        self.leg_mode = False
+        self.leg_lines = []
+        self.leg_default = {}
+        self.leg_grid = 0.001
+        self.leg_reserved = []
+        self.leg_layout = {}
+        self.leg_selected = None
+        self.leg_pin_selected = None
+        self.leg_clicks = {}
+        self.leg_pins_draft = None
+        self.leg_preview_pending = False
+        self.leg_tree_syncing = False
+        self.press_at = None
+        self.leg_status = tk.StringVar(value='Leg pins: default')
+        self.leg_info = tk.StringVar(value='')
+        self.leg_name_var = tk.StringVar()
+        self.leg_distance_var = tk.StringVar()
+        self.leg_length_var = tk.StringVar()
         self.vars = {name: (tk.BooleanVar(value=value) if isinstance(value, bool) else
                            tk.StringVar(value='' if value is None else str(value))) for name, value in DEFAULTS.items()}
         self.spine_follow = tk.BooleanVar(value=True)
@@ -294,8 +434,13 @@ class TransformerApp:
             'Eyebrow.TLabel': dict(foreground=fw.DIM),
             'Invalid.TEntry': dict(bordercolor=fw.ERR),
             'Invalid.TCombobox': dict(bordercolor=fw.ERR),
+            'Mode.TButton': dict(foreground=fw.WARN),
+            'ModeActive.TButton': dict(background=fw.WARN, foreground='#2b1d08'),
         }.items():
             style.configure(name, **values)
+        style.map('Mode.TButton', foreground=[('disabled', fw.DIM), ('!disabled', fw.WARN)])
+        style.map('ModeActive.TButton', background=[('disabled', fw.RAISED), ('active', '#f5c862')],
+                  foreground=[('disabled', fw.DIM), ('!disabled', '#2b1d08')])
 
     def _global_actions(self, parent):
         ttk.Button(parent, text='Load example', command=self.load_example).pack(side='left', padx=4)
@@ -396,11 +541,13 @@ class TransformerApp:
         body.rowconfigure(0, weight=1)
         body.columnconfigure(1, weight=1)
         left = ttk.Frame(body, style='Panel.TFrame', width=352)
+        self.left_panel = left
         left.grid(row=0, column=0, sticky='nsew', padx=(0, 12))
         left.grid_propagate(False)
         left.columnconfigure(0, weight=1)
         left.rowconfigure(1, weight=1)
-        ttk.Label(left, text='Design parameters / μm', style='Eyebrow.TLabel').grid(row=0, column=0, sticky='w', padx=16, pady=(16, 8))
+        self.param_eyebrow = ttk.Label(left, text='Design parameters / μm', style='Eyebrow.TLabel')
+        self.param_eyebrow.grid(row=0, column=0, sticky='w', padx=16, pady=(16, 8))
         self.notebook = ttk.Notebook(left)
         self.notebook.grid(row=1, column=0, sticky='nsew')
         self.pages = {}
@@ -412,6 +559,7 @@ class TransformerApp:
         self._pgs_fields()
         self._ring_fields()
         apply_panel = ttk.Frame(left, style='Raised.TFrame', padding=(12, 8))
+        self.apply_panel = apply_panel
         apply_panel.grid(row=2, column=0, sticky='ew')
         ttk.Label(apply_panel, textvariable=self.draft_status, background=COLORS['raised'],
                   foreground=COLORS['gold'], font=('liberation sans', 10)).pack(anchor='w', pady=(0, 8))
@@ -419,6 +567,7 @@ class TransformerApp:
                                        command=self.apply_parameters)
         self.apply_button.pack(fill='x')
         presets = ttk.Frame(left, style='Panel.TFrame', padding=(12, 8, 12, 12))
+        self.presets_panel = presets
         presets.grid(row=3, column=0, sticky='ew')
         presets.columnconfigure(0, weight=1)
         ttk.Label(presets, text='Saved presets', style='Muted.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 8))
@@ -430,6 +579,9 @@ class TransformerApp:
         self.preset_entry.grid(row=2, column=0, sticky='ew', pady=(8, 0), padx=(0, 8))
         self.preset_save = ttk.Button(presets, text='Save', command=self.save_preset, width=5)
         self.preset_save.grid(row=2, column=1, pady=(8, 0))
+        self.leg_panel = self._build_leg_panel(left)
+        self.leg_panel.grid(row=1, column=0, rowspan=3, sticky='nsew')
+        self.leg_panel.grid_remove()
 
         right = ttk.Frame(body, style='Panel.TFrame')
         right.grid(row=0, column=1, sticky='nsew')
@@ -446,14 +598,40 @@ class TransformerApp:
         self.zoom_label.grid(row=0, column=3)
         ttk.Button(tools, text='+', width=3, command=lambda: self.zoom_view(1.25)).grid(row=0, column=4, padx=4)
         ttk.Button(tools, text='Fit', command=self.fit_view).grid(row=0, column=5, padx=(8, 0))
+        self.leg_button = ttk.Button(tools, text='Leg Pins', style='Mode.TButton', command=self.toggle_leg_mode)
+        self.leg_button.grid(row=0, column=6, padx=(7, 0))
+        self.view_mode = tk.StringVar(master=self.root, value='2D')
+        self.preview3d = None
+        self._pin3d_after = None
+        if embed is not None:
+            self.view_combo = ttk.Combobox(tools, textvariable=self.view_mode, values=VIEW_MODES, state='readonly', width=10)
+            self.view_combo.grid(row=0, column=7, padx=(7, 0))
+            self.view_combo.bind('<<ComboboxSelected>>', lambda _e: self.switch_view())
+        leg_row = ttk.Frame(tools, style='Panel.TFrame')
+        leg_row.grid(row=1, column=0, columnspan=8, sticky='ew', pady=(5, 0))
+        self.leg_status_label = ttk.Label(leg_row, textvariable=self.leg_status, style='Muted.TLabel')
+        self.leg_status_label.pack(side='left')
+        self.leg_restore_button = ttk.Button(leg_row, text='Restore default pins', command=self.restore_applied_leg_pins)
+        self.leg_restore_button.pack(side='right')
+        self.leg_restore_button.pack_forget()
         self.legend = ttk.Frame(right, style='Panel.TFrame', padding=(12, 0, 12, 8))
         self.legend.grid(row=1, column=0, sticky='ew')
-        self.canvas = tk.Canvas(right, bg=fw.tk_plot_colors()['bg'], highlightbackground=COLORS['border'], highlightthickness=1, bd=0, cursor='fleur')
-        self.canvas.grid(row=2, column=0, sticky='nsew', padx=12)
+        area = ttk.Frame(right, style='Panel.TFrame')
+        area.grid(row=2, column=0, sticky='nsew', padx=12)
+        area.rowconfigure(0, weight=1)
+        area.columnconfigure(0, weight=1)
+        area.grid_propagate(False)  # the 2D/3D swap must not resize the preview area
+        self.preview_area = area
+        self.canvas = tk.Canvas(area, bg=fw.tk_plot_colors()['bg'], highlightbackground=COLORS['border'], highlightthickness=1, bd=0, cursor='fleur')
+        self.canvas.grid(row=0, column=0, sticky='nsew')
         self.canvas.bind('<Configure>', self._canvas_resize)
         self.canvas.bind('<ButtonPress-1>', self._pan_press)
         self.canvas.bind('<B1-Motion>', self._pan_move)
-        self.canvas.bind('<ButtonRelease-1>', lambda _e: setattr(self, 'pan_start', None))
+        self.canvas.bind('<ButtonRelease-1>', self._pan_release)
+        self.canvas.bind('<Double-Button-1>', self._canvas_double)
+        self.canvas.bind('<Escape>', lambda _e: self.leg_drag_cancel())
+        self.canvas.bind('<Delete>', lambda _e: self.delete_leg_pin() if self.leg_mode else None)
+        self.canvas.bind('<BackSpace>', lambda _e: self.delete_leg_pin() if self.leg_mode else None)
         self.metrics_label = ttk.Label(right, textvariable=self.metrics, style='Muted.TLabel')
         self.metrics_label.grid(row=3, column=0, sticky='w', padx=12, pady=(8, 8))
         diagnostics = ttk.Frame(right, style='Panel.TFrame', padding=(12, 0, 12, 12))
@@ -796,7 +974,7 @@ class TransformerApp:
             parameters={key: self.vars[key].get() for key in self.schema_for() if key not in SHARED_KEYS and key in self.vars},
             layers={role: self.vars[role].get() for role in self.model_roles() if role not in SHARED_ROLES},
             library=self.vars['library'].get(), provenance=library_provenance(self.library),
-            structure=self.vars['structure'].get())
+            structure=self.vars['structure'].get(), leg_pins=copy.deepcopy(getattr(self, 'leg_pins_draft', None)))
 
     def _model_selected(self, _event=None):
         selected = next((key for key, definition in self.models.items() if definition.get('title') == self.model_selection.get()), None)
@@ -806,6 +984,7 @@ class TransformerApp:
     def switch_model(self, model, mark_dirty=True):
         if model not in self.models or model == self.current_model:
             return
+        self.exit_leg_mode()
         self._save_body_draft()
         was_suspended = self.suspended
         self.suspended = True
@@ -814,6 +993,8 @@ class TransformerApp:
             self.vars['model'].set(model)
             self._render_body_fields()
             saved = self.body_drafts.get(model)
+            # Leg pins belong to one model's draft; never carry them across models.
+            self.leg_pins_draft = copy.deepcopy(saved.get('leg_pins')) if saved else None
             defaults = self.models[model].get('defaults', {})
             for name, entry in self.schema_for().items():
                 if name in SHARED_KEYS:
@@ -891,7 +1072,7 @@ class TransformerApp:
             try:
                 import backend
                 calls = {'context': backend.load_context, 'library': backend.register_library,
-                         'preview': backend.preview, 'generate': backend.generate,
+                         'preview': preview_with_legs, 'generate': backend.generate,
                          'save_preset': backend.save_preset, 'load_preset': backend.load_preset,
                          'presets': backend.preset_list}
                 payload = calls[kind](*args)
@@ -948,6 +1129,7 @@ class TransformerApp:
         if kind == 'preview' and (revision != self.revision or task_id != self.preview_task):
             if task_id == self.preview_task:
                 self.preview_busy = False
+                self._flush_leg_preview()
                 self.update_controls()
             return
         if kind in ('context', 'library'):
@@ -1008,8 +1190,9 @@ class TransformerApp:
             self.preview_busy = False
             if not ok:
                 self.preview_ok = False
+                self.preview_errors = [dict(part='system', message=str(payload), fields=[])]
                 self.preview_state.set('Applied validation failed')
-                self.render_messages([dict(part='system', message=str(payload), fields=[])])
+                self.render_messages(self.preview_errors)
                 self.status.set('Preview failed: ' + str(payload))
             elif not payload.get('skipped'):
                 errors = normalize_messages(payload.get('errors'))
@@ -1022,6 +1205,7 @@ class TransformerApp:
                     self.geometry = geometry
                     self.geometry_design = copy.deepcopy(self.applied_design)
                     self.preview_library = next((lib for lib in self.context['libraries'] if lib['name'] == self.applied_design['library']), None)
+                    self.push_3d()
                     self.refresh_legend()
                     if old_bounds != geometry['bounds'] or self.view is None:
                         self.fit_view()
@@ -1029,10 +1213,20 @@ class TransformerApp:
                 elif self.preview_ok:
                     self.preview_ok = False
                     errors.append(dict(part='system', message='The generator returned no displayable geometry.', fields=[]))
+                self.preview_errors = errors
+                self._install_leg_info(payload)
                 self.preview_state.set('Validated applied design' if self.preview_ok else 'Applied validation failed')
                 self.render_messages(errors, warnings)
+                leg_errors = [error for error in errors if error.get('code', '').startswith('leg_pin_')]
                 if self.dirty:
                     self.status.set('Applied preview updated. Your draft has changed; apply it before generating.')
+                elif getattr(self, 'leg_mode', False) and leg_errors:
+                    self.status.set('Leg pin layout rejected: {} Fix it in the list or restore defaults.'.format(leg_errors[0]['message']))
+                elif any(error.get('code') == 'leg_pin_unknown_leg' for error in leg_errors):
+                    self.status.set('Some leg pins refer to legs this layout no longer has. Open Leg Pins to fix them, '
+                                    'or select Restore default pins.')
+                elif leg_errors:
+                    self.status.set('Leg pin layout rejected: {} Open Leg Pins to fix it, or select Restore default pins.'.format(leg_errors[0]['message']))
                 elif self.preview_ok:
                     self.status.set('Applied design validated. Generate Layout saves geometry JSON.' if (self.library or {}).get('offline') else 'Applied design validated. Generate creates a new layout cell from this snapshot.')
                 else:
@@ -1264,10 +1458,14 @@ class TransformerApp:
                     parameters[key] = int(numeric) if kind == 'int' and math.isfinite(numeric) and numeric.is_integer() else numeric
                 except ValueError:
                     parameters[key] = None
-        return dict(model=self.current_model, library=self.vars['library'].get(), cell=self.vars['cell'].get().strip(),
-                    structure=self._structure_value(saved=self.vars['structure'].get()),
-                    parameters=parameters, layers={role: self.vars[role].get() for role in self.model_roles()
-                                                       if role in SHARED_ROLES or role in self.active_model_roles(parameters=parameters)})
+        design = dict(model=self.current_model, library=self.vars['library'].get(), cell=self.vars['cell'].get().strip(),
+                      structure=self._structure_value(saved=self.vars['structure'].get()),
+                      parameters=parameters, layers={role: self.vars[role].get() for role in self.model_roles()
+                                                         if role in SHARED_ROLES or role in self.active_model_roles(parameters=parameters)})
+        pins = getattr(self, 'leg_pins_draft', None)
+        if pins:
+            design['leg_pins'] = copy.deepcopy(pins)
+        return design
 
     def local_errors(self, design):
         errors = []
@@ -1320,6 +1518,7 @@ class TransformerApp:
         # Draft edits never submit geometry work or replace the applied snapshot.
         if self.generating or self.suspended:
             return
+        self.exit_leg_mode()
         self.dirty = True
         self.draft_status.set('Draft changed · Apply to commit')
         self.status.set('Draft changed. The preview shows the last applied design. Select Apply Parameters to update it.')
@@ -1426,6 +1625,19 @@ class TransformerApp:
         if 'tap' in self.field_widgets:
             enabled = 'tap' in self.active_model_roles()
             self.field_widgets['tap'].configure(state='readonly' if enabled and self.library and not frozen else 'disabled')
+        if getattr(self, 'leg_mode', False):
+            # The applied design is edited in place; draft inputs stay locked.
+            for widget in self.field_widgets.values():
+                widget.configure(state='disabled')
+            for button in ([self.apply_button, self.import_button, self.preset_load, self.context_button, self.custom_button,
+                            self.spine_checkbox, self.ground_checkbox] + list(self.structure_buttons) +
+                           list(self.pgs_shape_buttons) + list(self.ring_shape_buttons) +
+                           [getattr(self, name) for name in ('pgs_checkbox', 'ring_checkbox') if getattr(self, name, None) is not None]):
+                button.configure(state='disabled')
+            self._update_leg_buttons()
+        leg_button = getattr(self, 'leg_button', None)
+        if leg_button is not None:
+            leg_button.configure(state='disabled' if self.generating else 'normal')
         if self.context_busy or self.preview_busy or self.generating or self.preset_busy:
             self.progress.grid()
             self.progress.start(14)
@@ -1588,10 +1800,134 @@ class TransformerApp:
             self.schedule_redraw()
 
     def _pan_press(self, event):
+        self.press_at = (event.x, event.y)
+        self.pin_drag = None
+        if getattr(self, 'leg_mode', False):
+            self.canvas.focus_set()
+            if self.leg_drag_start(event.x, event.y):
+                return
         if self.view:
             self.pan_start = (event.x, event.y, self.view[0], self.view[1], self.scale())
 
+    def _pan_release(self, event):
+        self.pan_start = None
+        start, self.press_at = getattr(self, 'press_at', None), None
+        moved = start and math.hypot(event.x - start[0], event.y - start[1]) >= 4
+        if getattr(self, 'pin_drag', None):
+            if moved:
+                self.leg_drag_finish()
+                return
+            self.leg_drag_cancel(quiet=True)
+        if getattr(self, 'leg_mode', False) and start and not moved:
+            self.leg_canvas_click(event.x, event.y)
+
+    # pin dragging ------------------------------------------------------------
+    def leg_drag_start(self, cx, cy):
+        """Press on a pin: grab it so it can be dragged along its own leg."""
+        if not self._leg_edit_ready():
+            return False
+        hit = self.leg_hit(cx, cy)
+        if not hit or hit[0] != 'pin':
+            return False
+        leg = self._leg(hit[1])
+        pin = self.leg_layout[hit[1]][hit[2]]
+        port, problem = self._place(leg, pin)
+        if leg is None or problem:
+            return False
+        projected = leg_project(leg, *self._world(cx, cy))
+        self.pin_drag = dict(leg=hit[1], index=hit[2], original=copy.deepcopy(pin),
+                             grab=projected[1] - port['leg_distance'], distance=port['leg_distance'])
+        self.leg_selected, self.leg_pin_selected = hit[1], (hit[1], hit[2])
+        return True
+
+    def _drag_distance(self, leg, desired, length):
+        """Clamp a dragged pin to the leg and keep it on one straight section."""
+        desired = min(max(0.0, desired), leg['length'] - length)
+        grid = self.leg_grid or 0.001
+        best = None
+        for s0, s1, a, b in leg_segments(leg['centerline']):
+            diagonal = abs(b[0] - a[0]) > 1e-9 and abs(b[1] - a[1]) > 1e-9
+            if diagonal or s1 - s0 < length - 1e-9:
+                continue
+            candidate = min(max(desired, s0), s1 - length)
+            if best is None or abs(candidate - desired) < abs(best - desired):
+                best = candidate
+        if best is None:
+            return None
+        return round(round(best / grid) * grid, 9)
+
+    def _drag_pin(self):
+        """The pin being dragged, or None (the drag is dropped) if it no longer exists."""
+        drag = getattr(self, 'pin_drag', None)
+        if not drag:
+            return None
+        pins = self.leg_layout.get(drag['leg'], [])
+        if drag['index'] >= len(pins) or pins[drag['index']].get('name') != drag['original']['name'] or not self._leg(drag['leg']):
+            self.pin_drag = None
+            return None
+        return pins[drag['index']]
+
+    def leg_drag_move(self, cx, cy):
+        drag = getattr(self, 'pin_drag', None)
+        pin = self._drag_pin()
+        if pin is None or not self.view:
+            return False
+        leg = self._leg(drag['leg'])
+        projected = leg_project(leg, *self._world(cx, cy))
+        distance = self._drag_distance(leg, projected[1] - drag['grab'], pin['length'])
+        if distance is None:
+            return False
+        drag['distance'] = distance
+        pin['ratio'] = round(min(1.0, distance / leg['length']), 9)
+        self.status.set('Dragging {}: {:.3f} μm from the free end of {}. Release to apply.'.format(pin['name'], distance, drag['leg']))
+        self.schedule_redraw()
+        return True
+
+    def leg_drag_finish(self):
+        drag = getattr(self, 'pin_drag', None)
+        pin = self._drag_pin()
+        self.pin_drag = None
+        if pin is None:
+            return False
+        leg_id, index = drag['leg'], drag['index']
+        problems = self._leg_problems(leg_id, self.leg_layout[leg_id])
+        if problems:
+            self.leg_layout[leg_id][index] = drag['original']
+            self.status.set('Pin not moved: ' + problems[0])
+            self.schedule_redraw()
+            self._refresh_leg_panel()
+            return False
+        self._select_pin_object(leg_id, pin)
+        self._commit_leg_layout('Pin {} moved to {:.3f} μm from the free end of {}.'.format(pin['name'], drag['distance'], leg_id))
+        return True
+
+    def leg_drag_cancel(self, quiet=False):
+        drag = getattr(self, 'pin_drag', None)
+        pin = self._drag_pin()
+        self.pin_drag = None
+        if pin is None:
+            return False
+        self.leg_layout[drag['leg']][drag['index']] = drag['original']
+        self.leg_pin_selected = (drag['leg'], drag['index'])
+        if not quiet:
+            self.status.set('Pin drag cancelled.')
+        self._refresh_leg_panel()
+        self.schedule_redraw()
+        return True
+
+    def _canvas_double(self, event):
+        if not getattr(self, 'leg_mode', False):
+            return
+        hit = self.leg_hit(event.x, event.y)
+        if hit and hit[0] == 'pin':
+            self.leg_selected, self.leg_pin_selected = hit[1], (hit[1], hit[2])
+            self._refresh_leg_panel()
+            self.rename_leg_pin_dialog()
+
     def _pan_move(self, event):
+        if getattr(self, 'pin_drag', None):
+            self.leg_drag_move(event.x, event.y)
+            return
         if not self.pan_start:
             return
         x, y, cx, cy, scale = self.pan_start
@@ -1646,12 +1982,19 @@ class TransformerApp:
         canvas.create_line(ox, 0, ox, height, fill=fw.tk_plot_colors()['axis'], dash=(4, 5))
         canvas.create_line(0, oy, width, oy, fill=fw.tk_plot_colors()['axis'], dash=(4, 5))
         orders = {layer['name']: layer.get('order', 0) for layer in (self.preview_library or {}).get('layers', [])}
+        leg_mode = getattr(self, 'leg_mode', False)
         for polygon in sorted(self.geometry.get('polygons', []), key=lambda p: orders.get(p['layer'], 100)):
             layer = polygon['layer']
             if not self.layer_visible.get(layer, True):
                 continue
             points = [value for point in polygon['points'] for value in self.xy(*point)]
             color = '#877aab' if polygon.get('part') == 'pgs' else self.layer_color(layer)
+            if leg_mode:
+                # Legs are redrawn at full brightness by the leg overlay.
+                color = dim_color(color)
+                canvas.create_polygon(*points, fill=color, outline=color, width=.6,
+                                      tags=('geometry', 'dimmed', layer, polygon.get('part', 'body')))
+                continue
             canvas.create_polygon(*points, fill=color, outline=color, width=.6, tags=('geometry', layer, polygon.get('part', 'body')))
         via_cut_budget = 1000
         simplified_vias = False
@@ -1662,6 +2005,9 @@ class TransformerApp:
                 continue
             x0, y0 = self.xy(*via['bbox'][0])
             x1, y1 = self.xy(*via['bbox'][1])
+            if leg_mode:
+                canvas.create_rectangle(x0, y1, x1, y0, outline=dim_color('#f1d5a4'), width=1, dash=(2, 2), tags=('via', 'dimmed'))
+                continue
             canvas.create_rectangle(x0, y1, x1, y0, outline='#f1d5a4', width=1, dash=(2, 2), tags=('via',))
             origin, cuts, spacing = via.get('origin'), via.get('cut_size'), via.get('cut_spacing')
             rows, cols = via.get('rows', 0), via.get('columns', 0)
@@ -1679,7 +2025,9 @@ class TransformerApp:
             elif rows and cols:
                 simplified_vias = True
         pin_colors = pin_layer_colors(self.geometry)
-        pins = pin_annotations(self.geometry, self.layer_visible, self.xy, width, height)
+        pins = [] if leg_mode else pin_annotations(self.geometry, self.layer_visible, self.xy, width, height)
+        if leg_mode:
+            self._draw_leg_overlay(canvas, width, height, scale)
         for pin in pins:
             x0, y0, x1, y1 = pin['region']
             color = pin_colors.get(pin['layer'], '#95b3cb')
@@ -1716,6 +2064,885 @@ class TransformerApp:
             text = 'Draft pending · preview retained' if self.dirty else 'Validating applied design' if self.preview_busy else 'Applied validation failed'
             canvas.create_rectangle(width - 270, 38, width - 10, 67, fill=fw.PANEL, outline=fw.LINE)
             canvas.create_text(width - 140, 52, text=text, fill=COLORS['gold'], font=('liberation sans', 10))
+
+    # ------------------------------------------------------------------
+    # Leg Pin manager
+    # ------------------------------------------------------------------
+    def _build_leg_panel(self, parent):
+        panel = ttk.Frame(parent, style='Panel.TFrame', padding=(14, 0, 14, 10))
+        panel.columnconfigure(0, weight=1)
+        panel.rowconfigure(2, weight=1)
+        ttk.Label(panel, text='Leg Pin Manager', style='Section.TLabel').grid(row=0, column=0, sticky='w')
+        ttk.Label(panel, text='Click a leg to mark the insert point, click a pin to select it. Drag a pin to move it '
+                  'along its leg (Esc cancels). Delete removes it, double-click renames it. Distances are from the free end.',
+                  style='Muted.TLabel', wraplength=320, justify='left').grid(row=1, column=0, sticky='ew', pady=(3, 6))
+        holder = ttk.Frame(panel, style='Panel.TFrame')
+        holder.grid(row=2, column=0, sticky='nsew')
+        holder.columnconfigure(0, weight=1)
+        holder.rowconfigure(0, weight=1)
+        tree = ttk.Treeview(holder, columns=('distance', 'length'), show='tree headings', height=8, selectmode='browse')
+        tree.heading('#0', text='Leg / pin')
+        tree.heading('distance', text='From end μm')
+        tree.heading('length', text='Length μm')
+        tree.column('#0', width=132, minwidth=100)
+        tree.column('distance', width=82, minwidth=70, anchor='e')
+        tree.column('length', width=72, minwidth=60, anchor='e')
+        tree.tag_configure('leg', foreground=COLORS['gold'])
+        tree.tag_configure('missing', foreground=COLORS['red'])
+        tree.tag_configure('problem', foreground=COLORS['red'])
+        tree.tag_configure('shared', foreground='#ffb3e6')
+        tree.grid(row=0, column=0, sticky='nsew')
+        scroll = ttk.Scrollbar(holder, orient='vertical', command=tree.yview)
+        scroll.grid(row=0, column=1, sticky='ns')
+        tree.configure(yscrollcommand=scroll.set)
+        tree.bind('<<TreeviewSelect>>', self._leg_tree_selected)
+        tree.bind('<Double-Button-1>', lambda _e: self.rename_leg_pin_dialog() if self.leg_pin_selected else None)
+        tree.bind('<Delete>', lambda _e: self.delete_leg_pin())
+        self.leg_tree = tree
+        editor = ttk.Frame(panel, style='Panel.TFrame')
+        editor.grid(row=3, column=0, sticky='ew', pady=(8, 0))
+        for column, weight in ((1, 1), (3, 1)):
+            editor.columnconfigure(column, weight=weight)
+        self.leg_entries = []
+
+        def entry(row, column, label, variable, command, span=1):
+            ttk.Label(editor, text=label, style='Muted.TLabel').grid(row=row, column=column, sticky='w', padx=(0 if column == 0 else 6, 5), pady=(0, 5))
+            widget = ttk.Entry(editor, textvariable=variable, width=7)
+            widget.grid(row=row, column=column + 1, columnspan=span, sticky='ew', pady=(0, 5))
+            widget.bind('<Return>', lambda _e: command())
+            self.leg_entries.append(widget)
+
+        entry(0, 0, 'Name', self.leg_name_var, self._rename_from_entry, span=3)
+        entry(1, 0, 'From end', self.leg_distance_var, self._geometry_from_entries)
+        entry(1, 2, 'Length', self.leg_length_var, self._geometry_from_entries)
+        self.leg_rename_button = ttk.Button(editor, text='Rename', command=self._rename_from_entry, width=7)
+        self.leg_rename_button.grid(row=0, column=4, padx=(6, 0), pady=(0, 5), sticky='ew')
+        self.leg_move_button = ttk.Button(editor, text='Set', command=self._geometry_from_entries, width=7)
+        self.leg_move_button.grid(row=1, column=4, padx=(6, 0), pady=(0, 5), sticky='ew')
+        actions = ttk.Frame(panel, style='Panel.TFrame')
+        actions.grid(row=4, column=0, sticky='ew', pady=(3, 0))
+        for column in range(2):
+            actions.columnconfigure(column, weight=1, uniform='leg_actions')
+        self.leg_add_button = ttk.Button(actions, text='Add pin', command=self.add_leg_pin)
+        self.leg_add_button.grid(row=0, column=0, sticky='ew', padx=(0, 4))
+        self.leg_delete_button = ttk.Button(actions, text='Delete pin', command=self.delete_leg_pin)
+        self.leg_delete_button.grid(row=0, column=1, sticky='ew', padx=(4, 0))
+        self.leg_restore_leg_button = ttk.Button(actions, text='Default for leg', command=self.restore_leg_default)
+        self.leg_restore_leg_button.grid(row=1, column=0, sticky='ew', padx=(0, 4), pady=(6, 0))
+        self.leg_restore_all_button = ttk.Button(actions, text='Default for all', command=self.restore_all_leg_defaults)
+        self.leg_restore_all_button.grid(row=1, column=1, sticky='ew', padx=(4, 0), pady=(6, 0))
+        ttk.Label(panel, textvariable=self.leg_info, style='Muted.TLabel', wraplength=320,
+                  justify='left', foreground=COLORS['gold']).grid(row=5, column=0, sticky='ew', pady=(7, 0))
+        self.leg_exit_button = ttk.Button(panel, text='Exit Leg Pins', style='Primary.TButton', command=self.exit_leg_mode)
+        self.leg_exit_button.grid(row=6, column=0, sticky='ew', pady=(8, 0))
+        return panel
+
+    def leg_mode_block_reason(self):
+        """None when Leg Pins can open, else the reason it cannot."""
+        if self.generating:
+            return 'Wait for layout generation to finish.'
+        if self.context_busy or self.preset_busy:
+            return 'Wait for the library or preset operation to finish.'
+        if not self.applied_design:
+            return 'Apply Parameters first. Leg Pins edits the applied, validated design.'
+        if self.dirty:
+            return ('The draft has changes that are not applied. Select Apply Parameters and wait for '
+                    'validation before editing leg pins.')
+        if self.preview_busy or self.preview_revision != self.revision:
+            return 'Wait for validation of the applied design to finish.'
+        errors = getattr(self, 'preview_errors', [])
+        if any(not str(error.get('code') or '').startswith('leg_pin_') for error in errors) or \
+                (not self.preview_ok and not errors):
+            return 'The applied design failed validation. Correct the reported problems and apply again.'
+        if not getattr(self, 'leg_lines', None):
+            return 'This layout has no terminal legs to place pins on.'
+        return None
+
+    # 3D preview -----------------------------------------------------------------
+    def is_3d(self):
+        mode, view = getattr(self, 'view_mode', None), getattr(self, 'preview3d', None)
+        return mode is not None and mode.get() != '2D' and view is not None and view.ok
+
+    def switch_view(self, mode=None):
+        """2D canvas, or the Layout 3D Viewer widget (created on first use)."""
+        if mode is not None:
+            self.view_mode.set(mode)
+        mode = self.view_mode.get()
+        if mode != '2D':
+            if self.preview3d is None:
+                ok, reason = embed.available() if embed is not None else (False, EMBED_NOTE)
+                if not ok:
+                    self.view_mode.set('2D')
+                    self.status.set('3D preview unavailable: ' + reason)
+                    self._arrange_preview()
+                    return False
+                self.preview3d = embed.Preview3D(self.preview_area, style='studio', theme='dark',
+                                                 on_pin_click=self._pin_clicked_3d, bg=COLORS['panel'])
+            if not self.preview3d.ok:
+                reason = self.preview3d.reason
+                self.view_mode.set('2D')
+                self.status.set('3D preview unavailable: ' + reason)
+                self._arrange_preview()
+                return False
+            self.preview3d.set_style('studio' if mode == '3D Studio' else 'metal')
+        self._arrange_preview()
+        if mode != '2D':
+            self.push_3d()
+            # OpenGL initialises when the widget is first mapped; fall back if it fails then.
+            self._after_3d('_check3d_after', 400, self._check_3d)
+        return True
+
+    def _after_3d(self, slot, delay, callback):
+        """One tracked Tk callback per slot (cancelled on replace and on close)."""
+        previous = getattr(self, slot, None)
+        if previous is not None:
+            try:
+                self.root.after_cancel(previous)
+            except tk.TclError:
+                pass
+        def run():
+            setattr(self, slot, None)
+            callback()
+        setattr(self, slot, self.root.after(delay, run))
+
+    def _cancel_3d_callbacks(self):
+        for slot in ('_pin3d_after', '_check3d_after'):
+            handle = getattr(self, slot, None)
+            setattr(self, slot, None)
+            if handle is not None:
+                try:
+                    self.root.after_cancel(handle)
+                except tk.TclError:
+                    pass
+
+    def _check_3d(self):
+        view = getattr(self, 'preview3d', None)
+        if view is not None and not view.ok and self.view_mode.get() != '2D':
+            self.view_mode.set('2D')
+            self._arrange_preview()
+            self.status.set('3D preview unavailable: ' + str(view.reason))
+
+    def _arrange_preview(self):
+        """2D only, 3D only, or (Leg Pins + 3D) the 2D editor beside the 3D view."""
+        area = getattr(self, 'preview_area', None)
+        if area is None:
+            return
+        three = self.is_3d()
+        both = three and getattr(self, 'leg_mode', False)
+        area.columnconfigure(0, weight=1, uniform='preview' if both else '')
+        area.columnconfigure(1, weight=1 if both else 0, uniform='preview' if both else '')
+        if three:
+            self.preview3d.grid(row=0, column=1 if both else 0, sticky='nsew', padx=(6, 0) if both else 0)
+        elif self.preview3d is not None:
+            self.preview3d.frame.grid_remove()
+        if three and not both:
+            self.canvas.grid_remove()
+        else:
+            self.canvas.grid(row=0, column=0, sticky='nsew')
+
+    def push_3d(self):
+        """Send the current applied geometry to the 3D view (debounced by the widget)."""
+        if not self.is_3d() or not self.geometry or not self.preview_library:
+            return
+        try:
+            self.preview3d.set_scene(embed.flux_scene({'geometry': self.geometry}, self.preview_library))
+        except Exception as exc:
+            self.status.set('3D preview could not show this geometry: {}'.format(exc))
+            return
+        # The scene is rebuilt after the widget's debounce; mark the pin afterwards.
+        self._after_3d('_pin3d_after', 250, self.sync_3d_pin)
+
+    def sync_3d_pin(self):
+        """Mark the selected leg pin in 3D (cleared outside Leg Pins)."""
+        if not self.is_3d():
+            return
+        name = None
+        if getattr(self, 'leg_mode', False) and self.leg_pin_selected:
+            pin = self._selected_pin()[2]
+            name = pin['name'] if pin else None
+        self.preview3d.highlight_pin(name)
+
+    def _pin_clicked_3d(self, name):
+        """A pin clicked in 3D selects that leg pin in the editor when Leg Pins is open."""
+        if getattr(self, 'leg_mode', False):
+            matches = [(leg_id, index) for leg_id, pins in self.leg_layout.items()
+                       for index, pin in enumerate(pins) if pin['name'] == name]
+            if matches:
+                # Same-named pins share one 3D label: repeated clicks step through them.
+                current = self.leg_pin_selected
+                leg_id, index = matches[(matches.index(current) + 1) % len(matches)] if current in matches else matches[0]
+                self.leg_selected, self.leg_pin_selected = leg_id, (leg_id, index)
+                self._refresh_leg_panel()
+                self.schedule_redraw()
+                self.status.set('Pin {} on leg {} selected from the 3D view.'.format(name, leg_id))
+                return
+        self.status.set('Pin ' + str(name))
+
+    def toggle_leg_mode(self):
+        if getattr(self, 'leg_mode', False):
+            self.exit_leg_mode()
+        else:
+            self.enter_leg_mode()
+
+    def enter_leg_mode(self):
+        reason = self.leg_mode_block_reason()
+        if reason:
+            self.status.set('Leg Pins unavailable: ' + reason)
+            messagebox.showinfo('Leg Pins', reason, parent=self.root)
+            return False
+        self.leg_layout = self._working_layout((self.applied_design or {}).get('leg_pins'))
+        self.leg_mode = True
+        self.leg_selected = self.leg_lines[0]['id']
+        self.leg_pin_selected = None
+        self.leg_clicks = {}
+        self._show_leg_panel(True)
+        self._refresh_leg_panel()
+        self._arrange_preview()
+        self.update_leg_status()
+        self.update_controls()
+        self.schedule_redraw()
+        self.status.set('Leg Pins: edits apply to the applied design immediately and are revalidated in the background.')
+        return True
+
+    def exit_leg_mode(self):
+        if getattr(self, 'pin_drag', None):
+            self.leg_drag_cancel()
+        if not getattr(self, 'leg_mode', False):
+            return
+        self.leg_mode = False
+        self.leg_pin_selected = None
+        self._show_leg_panel(False)
+        self._arrange_preview()
+        self.sync_3d_pin()
+        self.update_leg_status()
+        self.update_controls()
+        self.schedule_redraw()
+        self.status.set('Leg Pins closed. Pin edits are part of the applied design and its draft.')
+
+    def _show_leg_panel(self, visible):
+        if not hasattr(self, 'leg_panel'):
+            return
+        regular = (self.notebook, self.apply_panel, self.presets_panel)
+        if visible:
+            for widget in regular:
+                widget.grid_remove()
+            self.leg_panel.grid()
+            self.param_eyebrow.configure(text='LEG PINS  /  μm')
+        else:
+            self.leg_panel.grid_remove()
+            for widget in regular:
+                widget.grid()
+            self.param_eyebrow.configure(text='DESIGN PARAMETERS  /  μm')
+        self.leg_button.configure(text='Exit Leg Pins' if visible else 'Leg Pins',
+                                  style='ModeActive.TButton' if visible else 'Mode.TButton')
+
+    def _working_layout(self, stored):
+        layout = copy.deepcopy(getattr(self, 'leg_default', {}) or {})
+        for leg, pins in (stored or {}).items():
+            layout[leg] = copy.deepcopy(pins)
+        for pins in layout.values():
+            pins.sort(key=lambda pin: pin['ratio'])
+        return layout
+
+    def _stored_layout(self, layout):
+        """Only legs that differ from their default pin are stored."""
+        default = getattr(self, 'leg_default', {}) or {}
+        stored = {leg: copy.deepcopy(pins) for leg, pins in layout.items()
+                  if leg not in default or not same_pins(pins, default[leg])}
+        return stored or None
+
+    def _leg(self, leg_id):
+        return next((leg for leg in getattr(self, 'leg_lines', []) if leg['id'] == leg_id), None)
+
+    def _place(self, leg, pin):
+        try:
+            return leg_pins.place(leg, pin, self.leg_grid)
+        except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+            return None, dict(code='leg_pin_place', message=str(exc))
+
+    def _leg_problems(self, leg_id, pins):
+        """Local placement checks mirroring the backend (fit, segment, overlap)."""
+        leg = self._leg(leg_id)
+        if not leg:
+            return []
+        problems, placed = [], []
+        for pin in pins:
+            port, problem = self._place(leg, pin)
+            if problem:
+                problems.append(problem['message'])
+                continue
+            placed.append(port)
+        problems += [item['message'] for item in leg_pins.overlaps(placed)]
+        return problems
+
+    def _all_pin_names(self, skip=None):
+        return [pin['name'] for leg, pins in self.leg_layout.items() for index, pin in enumerate(pins)
+                if (leg, index) != skip]
+
+    def _next_pin_name(self):
+        used = set(self._all_pin_names()) | {leg['id'] for leg in self.leg_lines} | set(self.leg_layout)
+        used |= set(RESERVED_PIN_NAMES) | set(getattr(self, 'leg_reserved', []))
+        index = 1
+        while 'pin_{}'.format(index) in used:
+            index += 1
+        return 'pin_{}'.format(index)
+
+    def leg_name_rejection(self, leg_id, name):
+        """Reason a pin on ``leg_id`` cannot be called ``name``; None if allowed."""
+        if not leg_pins.NAME.fullmatch(name):
+            return 'Pin names start with a letter and use letters, digits and underscores (up to 80 characters).'
+        if name in RESERVED_PIN_NAMES or name in getattr(self, 'leg_reserved', []):
+            return 'Pin name {} is reserved by another pin of this layout (ground pins cannot be reused).'.format(name)
+        legs = {leg['id'] for leg in self.leg_lines} | set(self.leg_layout)
+        if name in legs and name != leg_id:
+            return 'Pin name {0} is the default name of leg {0}; use it only on that leg.'.format(name)
+        leg = self._leg(leg_id) or {}
+        kind = leg.get('kind', 'signal')
+        for other_id, pins in self.leg_layout.items():
+            other = self._leg(other_id)
+            if other_id == leg_id or not other or not any(pin['name'] == name for pin in pins):
+                continue
+            if other.get('kind', 'signal') != kind:
+                return 'Pin name {} is already used on {} leg {}; signal and TAP pins cannot share a name.'.format(
+                    name, 'TAP' if other.get('kind') == 'tap' else 'signal', other_id)
+            if other.get('net') != leg.get('net'):
+                return ('Pin name {} is already used on leg {} of another winding (net {} vs {}); one terminal '
+                        'cannot join separate nets.').format(name, other_id, other.get('net'), leg.get('net'))
+        return None
+
+    def _leg_edit_ready(self):
+        if not getattr(self, 'leg_mode', False):
+            return False
+        if getattr(self, 'pin_drag', None):
+            # Any other edit ends an unfinished drag first (restoring the pin).
+            self.leg_drag_cancel()
+        if self.generating or self.context_busy or self.preset_busy:
+            self.status.set('Wait for the current generation, library or preset task before editing leg pins.')
+            return False
+        return True
+
+    def _selected_pin(self, leg_id=None, index=None):
+        if leg_id is None or index is None:
+            if not self.leg_pin_selected:
+                return None, None, None
+            leg_id, index = self.leg_pin_selected
+        pins = self.leg_layout.get(leg_id, [])
+        if not 0 <= index < len(pins):
+            return None, None, None
+        return leg_id, index, pins[index]
+
+    def _select_pin_object(self, leg_id, pin):
+        pins = self.leg_layout.get(leg_id, [])
+        pins.sort(key=lambda item: item['ratio'])
+        self.leg_selected = leg_id
+        self.leg_pin_selected = next(((leg_id, i) for i, item in enumerate(pins) if item is pin), None)
+
+    def add_leg_pin(self, leg_id=None):
+        """Add a 1 μm pin at the last click on the leg (or at its free end)."""
+        if not self._leg_edit_ready():
+            return False
+        leg_id = leg_id or self.leg_selected
+        leg = self._leg(leg_id)
+        if not leg:
+            self.status.set('Select a leg on the canvas or in the list before adding a pin.')
+            return False
+        pins = self.leg_layout.setdefault(leg_id, [])
+        if len(pins) >= leg_pins.MAX_PINS_PER_LEG:
+            messagebox.showerror('Cannot add pin', 'A leg holds at most {} pins.'.format(leg_pins.MAX_PINS_PER_LEG), parent=self.root)
+            return False
+        total = leg['length']
+        length = min(leg_pins.DEFAULT_LENGTH, total)
+        click = self.leg_clicks.get(leg_id)
+        start = 0.0
+        if click is not None:
+            start = click - length / 2
+            for s0, s1, _a, _b in leg_segments(leg['centerline']):
+                if s0 - 1e-9 <= click <= s1 + 1e-9 and s1 - s0 >= length:
+                    start = max(s0, min(start, s1 - length))
+                    break
+            start = max(0.0, min(start, total - length))
+        name = self._next_pin_name()
+        candidates = [start]
+        if click is None:
+            # No insert point: the free end, or the first free gap walking inward from it.
+            # Keep a one-pin-length gap after an existing pin.
+            for item in pins:
+                port, _problem = self._place(leg, item)
+                if port:
+                    candidates.append(port['leg_distance'] + item['length'] + length)
+            candidates = sorted(value for value in candidates if value <= total - length + 1e-9)
+        pin = problems = None
+        for value in candidates or [start]:
+            # Round the ratio up so the pin never creeps back into its neighbour.
+            pin = dict(name=name, ratio=min(1.0, math.ceil(value / total * 1e9) / 1e9) if total > 0 else 0.0, length=length)
+            problems = self._leg_problems(leg_id, pins + [pin])
+            if not problems:
+                start = value
+                break
+        if problems:
+            messagebox.showerror('Cannot add pin', problems[0] + '\nClick a free straight part of the leg and try again.', parent=self.root)
+            return False
+        pins.append(pin)
+        self._select_pin_object(leg_id, pin)
+        self._commit_leg_layout('Added {} on leg {} at {:.3f} μm from the free end.'.format(pin['name'], leg_id, start))
+        return True
+
+    def delete_leg_pin(self, leg_id=None, index=None):
+        if not self._leg_edit_ready():
+            return False
+        leg_id, index, pin = self._selected_pin(leg_id, index)
+        if pin is None:
+            self.status.set('Select a pin to delete.')
+            return False
+        self.leg_layout[leg_id].pop(index)
+        self.leg_pin_selected = None
+        self.leg_selected = leg_id
+        left = len(self.leg_layout[leg_id])
+        self._commit_leg_layout('Deleted {} from leg {}; {} pin{} left on this leg.'.format(
+            pin['name'], leg_id, left, '' if left == 1 else 's'))
+        return True
+
+    def rename_leg_pin(self, leg_id, index, name):
+        if not self._leg_edit_ready():
+            return False
+        leg_id, index, pin = self._selected_pin(leg_id, index)
+        if pin is None:
+            return False
+        name = str(name or '').strip()
+        if name == pin['name']:
+            return True
+        reason = self.leg_name_rejection(leg_id, name)
+        if reason:
+            messagebox.showerror('Pin name not allowed', reason, parent=self.root)
+            self.status.set(reason)
+            return False
+        shared = sorted({leg for leg, pins in self.leg_layout.items() for i, other in enumerate(pins)
+                         if other['name'] == name and (leg, i) != (leg_id, index)})
+        if shared and not messagebox.askyesno(
+                'Same pin name',
+                'Pin name {} is already used on leg {}.\n\nEMX treats pins with the same name as one shorted '
+                'terminal. Use the same name anyway?'.format(name, ', '.join(shared)), parent=self.root):
+            return False
+        old = pin['name']
+        pin['name'] = name
+        self._select_pin_object(leg_id, pin)
+        self._commit_leg_layout('Renamed {} to {} on leg {}.'.format(old, name, leg_id) +
+                                (' Same-named pins form one EMX terminal.' if shared else ''))
+        return True
+
+    def rename_leg_pin_dialog(self):
+        leg_id, index, pin = self._selected_pin()
+        if pin is None:
+            return False
+        name = simpledialog.askstring('Rename pin', 'New name for pin {} on leg {}:'.format(pin['name'], leg_id),
+                                      initialvalue=pin['name'], parent=self.root)
+        if name is None:
+            return False
+        return self.rename_leg_pin(leg_id, index, name)
+
+    def set_leg_pin_geometry(self, leg_id, index, distance, length):
+        """Move/resize a pin; ``distance`` is from the free end, both in μm."""
+        if not self._leg_edit_ready():
+            return False
+        leg_id, index, pin = self._selected_pin(leg_id, index)
+        leg = self._leg(leg_id)
+        if pin is None or leg is None:
+            return False
+        try:
+            distance, length = float(distance), float(length)
+        except (TypeError, ValueError):
+            distance = length = float('nan')
+        total = leg['length']
+        problem = None
+        if not (math.isfinite(distance) and math.isfinite(length)):
+            problem = 'Enter numeric distance and length in μm.'
+        elif length <= 0 or distance < 0:
+            problem = 'Length must be positive and the distance from the free end cannot be negative.'
+        elif distance + length > total + 1e-9:
+            problem = 'Pin {} ends {:.3f} μm from the free end, beyond leg {} ({:.3f} μm).'.format(
+                pin['name'], distance + length, leg_id, total)
+        if problem is None:
+            candidate = dict(pin, ratio=round(min(1.0, distance / total), 9), length=length)
+            others = [item for i, item in enumerate(self.leg_layout[leg_id]) if i != index]
+            problems = self._leg_problems(leg_id, others + [candidate])
+            problem = problems[0] if problems else None
+        if problem:
+            messagebox.showerror('Pin position not applied', problem, parent=self.root)
+            self.status.set(problem)
+            return False
+        pin.update(ratio=candidate['ratio'], length=length)
+        self._select_pin_object(leg_id, pin)
+        self._commit_leg_layout('Pin {} now starts {:.3f} μm from the free end of {} ({:.3f} μm long, ratio {:.4f}).'.format(
+            pin['name'], distance, leg_id, length, pin['ratio']))
+        return True
+
+    def _rename_from_entry(self):
+        if self.leg_pin_selected:
+            self.rename_leg_pin(*self.leg_pin_selected, self.leg_name_var.get())
+
+    def _geometry_from_entries(self):
+        if self.leg_pin_selected:
+            self.set_leg_pin_geometry(*self.leg_pin_selected, self.leg_distance_var.get(), self.leg_length_var.get())
+
+    def restore_leg_default(self, leg_id=None):
+        if not self._leg_edit_ready():
+            return False
+        leg_id = leg_id or self.leg_selected
+        if leg_id not in self.leg_layout and leg_id not in self.leg_default:
+            self.status.set('Select a leg to restore.')
+            return False
+        if leg_id in self.leg_default:
+            self.leg_layout[leg_id] = copy.deepcopy(self.leg_default[leg_id])
+        else:
+            self.leg_layout.pop(leg_id, None)
+            leg_id = None
+        self.leg_selected = leg_id or (self.leg_lines[0]['id'] if self.leg_lines else None)
+        self.leg_pin_selected = None
+        self._commit_leg_layout('Restored the default pin of leg {}.'.format(leg_id) if leg_id else
+                                'Removed pins of a leg that no longer exists.')
+        return True
+
+    def restore_all_leg_defaults(self):
+        if not self._leg_edit_ready():
+            return False
+        self.leg_layout = copy.deepcopy(self.leg_default)
+        self.leg_pin_selected = None
+        self._commit_leg_layout('Restored the default pin on every leg.')
+        return True
+
+    def restore_applied_leg_pins(self, confirm=True):
+        """Outside the manager: drop the applied leg-pin layout (e.g. after an unknown-leg error)."""
+        if self.generating or self.context_busy or self.preset_busy or not self.applied_design:
+            return False
+        if getattr(self, 'leg_mode', False):
+            return self.restore_all_leg_defaults()
+        if confirm and not messagebox.askyesno('Restore default pins',
+                'Remove every custom leg pin and use one default pin at the end of each leg?', parent=self.root):
+            return False
+        model = self.applied_design.get('model')
+        self.applied_design.pop('leg_pins', None)
+        # Only the applied model's pins are restored; other models keep theirs.
+        if self.current_model == model:
+            self.leg_pins_draft = None
+            if not self.dirty:
+                self._save_body_draft()
+            elif model in self.body_drafts:
+                self.body_drafts[model]['leg_pins'] = None
+        elif model in self.body_drafts:
+            self.body_drafts[model]['leg_pins'] = None
+        self.revision += 1
+        self.preview_ok = False
+        self._request_leg_preview()
+        self.update_leg_status()
+        self.status.set('Default leg pins restored; revalidating the applied design.')
+        return True
+
+    def _install_leg_info(self, payload):
+        """Remember the legs reported with the latest applied preview."""
+        if isinstance(payload, dict) and payload.get('leg_lines'):
+            self.leg_lines = copy.deepcopy(payload['leg_lines'])
+            self.leg_default = copy.deepcopy(payload.get('leg_default') or {})
+            self.leg_grid = payload.get('leg_grid') or 0.001
+            self.leg_reserved = list(payload.get('leg_reserved') or [])
+        else:
+            self.leg_lines, self.leg_default, self.leg_reserved = [], {}, []
+        if getattr(self, 'leg_mode', False):
+            if not self.leg_lines:
+                self.exit_leg_mode()
+            else:
+                if not self._leg(self.leg_selected) and self.leg_selected not in self.leg_layout:
+                    self.leg_selected = self.leg_lines[0]['id']
+                if self.leg_pin_selected and self._selected_pin()[2] is None:
+                    self.leg_pin_selected = None
+                self._refresh_leg_panel()
+        self.update_leg_status()
+
+    def _request_leg_preview(self):
+        if self.preview_busy:
+            self.leg_preview_pending = True
+            self.preview_state.set('Validating leg pin edits...')
+        else:
+            self.preview()
+
+    def _flush_leg_preview(self):
+        if getattr(self, 'leg_preview_pending', False) and self.applied_design and not self.preview_busy:
+            self.leg_preview_pending = False
+            self.preview()
+
+    def _commit_leg_layout(self, message=None):
+        """Write the working layout into the applied design and its draft, then revalidate."""
+        stored = self._stored_layout(self.leg_layout)
+        if stored:
+            self.applied_design['leg_pins'] = copy.deepcopy(stored)
+        else:
+            self.applied_design.pop('leg_pins', None)
+        self.leg_pins_draft = copy.deepcopy(stored)
+        self._save_body_draft()
+        self.dirty = False
+        self.draft_status.set('Parameters applied')
+        self.revision += 1
+        self.preview_ok = False
+        self._request_leg_preview()
+        self._refresh_leg_panel()
+        self.update_leg_status()
+        self.update_controls()
+        self.schedule_redraw()
+        if message:
+            self.status.set(message)
+
+    def update_leg_status(self):
+        stored = (self.applied_design or {}).get('leg_pins')
+        variable = getattr(self, 'leg_status', None)
+        if variable is None:
+            return
+        if not stored:
+            text = 'Leg pins: default'
+        else:
+            effective = dict(getattr(self, 'leg_default', {}) or {})
+            effective.update(stored)
+            count = sum(len(pins) for pins in effective.values())
+            text = 'Leg pins: custom · {} pin{}'.format(count, '' if count == 1 else 's')
+            if leg_pins.requires_pin_mapping(stored):
+                text += ' · EMX targets must name pins'
+        leg_errors = [error for error in getattr(self, 'preview_errors', []) if str(error.get('code') or '').startswith('leg_pin_')]
+        if leg_errors:
+            text += ' · {} leg pin issue{}'.format(len(leg_errors), '' if len(leg_errors) == 1 else 's')
+        variable.set(text)
+        button = getattr(self, 'leg_restore_button', None)
+        if button is not None:
+            if stored and leg_errors and not getattr(self, 'leg_mode', False):
+                button.pack(side='right')
+            else:
+                button.pack_forget()
+        if getattr(self, 'leg_mode', False):
+            info = []
+            leg = self._leg(self.leg_selected)
+            if leg:
+                info.append('Leg {} · {} · {:.3f} μm long · {:.3f} μm wide'.format(leg['id'], leg['layer'], leg['length'], leg['width']))
+                if self.leg_clicks.get(leg['id']) is not None:
+                    info.append('Insert point {:.3f} μm from the free end.'.format(self.leg_clicks[leg['id']]))
+            if leg_pins.requires_pin_mapping(stored):
+                info.append('Pin names or counts differ from the defaults: EMX targets must name pins explicitly.')
+            self.leg_info.set('\n'.join(info))
+
+    def _refresh_leg_panel(self):
+        tree = getattr(self, 'leg_tree', None)
+        if tree is None:
+            self.update_leg_status()
+            return
+        self.leg_tree_syncing = True
+        try:
+            tree.delete(*tree.get_children())
+            names = self._all_pin_names()
+            order = [leg['id'] for leg in self.leg_lines] + [leg for leg in self.leg_layout if not self._leg(leg)]
+            for leg_id in order:
+                leg = self._leg(leg_id)
+                pins = self.leg_layout.get(leg_id, [])
+                if leg:
+                    text = '{}  ·  {}'.format(leg_id, leg['layer'])
+                    tags = ('leg',)
+                else:
+                    text = '{}  ·  leg missing'.format(leg_id)
+                    tags = ('missing',)
+                tree.insert('', 'end', iid='leg:' + leg_id, text=text, open=True, tags=tags,
+                            values=('L {:.2f}'.format(leg['length']) if leg else '',
+                                    '{} pin{}'.format(len(pins), '' if len(pins) == 1 else 's')))
+                for index, pin in enumerate(pins):
+                    port, problem = self._place(leg, pin) if leg else (None, True)
+                    distance = port['leg_distance'] if port else pin['ratio'] * (leg or {}).get('length', 0)
+                    shared = names.count(pin['name']) > 1
+                    tag = 'problem' if problem else 'shared' if shared else 'pin'
+                    tree.insert('leg:' + leg_id, 'end', iid='pin:{}:{}'.format(leg_id, index),
+                                text=pin['name'] + (' (shared)' if shared else ''), tags=(tag,),
+                                values=('{:.3f}'.format(distance), '{:.3f}'.format(pin['length'])))
+            target = ('pin:{}:{}'.format(*self.leg_pin_selected) if self.leg_pin_selected else
+                      'leg:' + self.leg_selected if self.leg_selected else None)
+            if target and tree.exists(target):
+                tree.selection_set(target)
+                tree.see(target)
+            else:
+                tree.selection_set(())
+        finally:
+            self.leg_tree_syncing = False
+        self._fill_leg_editor()
+        self.update_leg_status()
+        self._update_leg_buttons()
+        if getattr(self, 'preview3d', None) is not None:
+            self.sync_3d_pin()
+
+    def _fill_leg_editor(self):
+        leg_id, _index, pin = self._selected_pin()
+        if pin is None:
+            for variable in (self.leg_name_var, self.leg_distance_var, self.leg_length_var):
+                variable.set('')
+            return
+        leg = self._leg(leg_id)
+        port, _problem = self._place(leg, pin) if leg else (None, None)
+        distance = port['leg_distance'] if port else pin['ratio'] * (leg or {}).get('length', 0)
+        self.leg_name_var.set(pin['name'])
+        self.leg_distance_var.set('{:.4g}'.format(round(distance, 6)))
+        self.leg_length_var.set('{:.4g}'.format(round(pin['length'], 6)))
+
+    def _update_leg_buttons(self):
+        if not hasattr(self, 'leg_add_button'):
+            return
+        busy = self.generating or self.context_busy or self.preset_busy
+        pin = self._selected_pin()[2] is not None
+        leg = self._leg(self.leg_selected) is not None
+        states = {self.leg_add_button: leg, self.leg_delete_button: pin, self.leg_rename_button: pin,
+                  self.leg_move_button: pin, self.leg_restore_leg_button: bool(self.leg_selected),
+                  self.leg_restore_all_button: True}
+        for button, enabled in states.items():
+            button.configure(state='normal' if enabled and not busy else 'disabled')
+        for entry in self.leg_entries:
+            entry.configure(state='normal' if pin and not busy else 'disabled')
+
+    def _leg_tree_selected(self, _event=None):
+        if self.leg_tree_syncing:
+            return
+        selection = self.leg_tree.selection()
+        if not selection:
+            return
+        parts = selection[0].split(':')
+        if parts[0] == 'pin':
+            self.leg_selected, self.leg_pin_selected = parts[1], (parts[1], int(parts[2]))
+        else:
+            self.leg_selected, self.leg_pin_selected = parts[1], None
+        self._fill_leg_editor()
+        self.update_leg_status()
+        self._update_leg_buttons()
+        self.schedule_redraw()
+
+    def _world(self, cx, cy):
+        scale = self.scale()
+        return (self.view[0] + (cx - self.canvas.winfo_width() / 2) / scale,
+                self.view[1] - (cy - self.canvas.winfo_height() / 2) / scale)
+
+    def _leg_visible(self, leg):
+        return self.layer_visible.get(leg['layer'], True)
+
+    def leg_pin_regions(self):
+        """Canvas rectangles of every placeable pin, enlarged to stay clickable."""
+        regions = []
+        for leg in self.leg_lines:
+            if not self._leg_visible(leg):
+                continue
+            for index, pin in enumerate(self.leg_layout.get(leg['id'], [])):
+                port, problem = self._place(leg, pin)
+                if problem:
+                    continue
+                x0, y0 = self.xy(*port['bbox'][0])
+                x1, y1 = self.xy(*port['bbox'][1])
+                x0, x1 = min(x0, x1), max(x0, x1)
+                y0, y1 = min(y0, y1), max(y0, y1)
+                cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+                half_x = max((x1 - x0) / 2, LEG_PIN_MIN_PIXELS / 2)
+                half_y = max((y1 - y0) / 2, LEG_PIN_MIN_PIXELS / 2)
+                regions.append(dict(leg=leg['id'], index=index, name=pin['name'], port=port,
+                                    region=(cx - half_x, cy - half_y, cx + half_x, cy + half_y), point=(cx, cy)))
+        return regions
+
+    def leg_hit(self, cx, cy):
+        """('pin', leg, index) / ('leg', leg, distance from free end) / None."""
+        if not self.view or not getattr(self, 'leg_lines', None):
+            return None
+        best = None
+        for region in self.leg_pin_regions():
+            x0, y0, x1, y1 = region['region']
+            if x0 - 3 <= cx <= x1 + 3 and y0 - 3 <= cy <= y1 + 3:
+                area = (x1 - x0) * (y1 - y0)
+                if best is None or area < best[0]:
+                    best = (area, region)
+        if best:
+            return ('pin', best[1]['leg'], best[1]['index'])
+        x, y = self._world(cx, cy)
+        tolerance = 4 / max(self.scale(), 1e-9)
+        nearest = None
+        for leg in self.leg_lines:
+            if not self._leg_visible(leg):
+                continue
+            projected = leg_project(leg, x, y)
+            if projected and projected[0] <= leg['width'] / 2 + tolerance and (nearest is None or projected[0] < nearest[0]):
+                nearest = (projected[0], leg, projected[1])
+        if nearest:
+            return ('leg', nearest[1]['id'], min(max(nearest[2], 0.0), nearest[1]['length']))
+        return None
+
+    def leg_canvas_click(self, cx, cy):
+        hit = self.leg_hit(cx, cy)
+        if hit and hit[0] == 'pin':
+            self.leg_selected, self.leg_pin_selected = hit[1], (hit[1], hit[2])
+            pin = self.leg_layout[hit[1]][hit[2]]
+            self.status.set('Pin {} on leg {} selected. Delete removes it; double-click renames it.'.format(pin['name'], hit[1]))
+        elif hit:
+            self.leg_selected, self.leg_pin_selected = hit[1], None
+            self.leg_clicks[hit[1]] = round(hit[2], 6)
+            self.status.set('Leg {} selected; insert point {:.3f} μm from the free end. Add pin places a 1 μm pin there.'.format(hit[1], hit[2]))
+        else:
+            self.leg_pin_selected = None
+        self._refresh_leg_panel()
+        self.schedule_redraw()
+        return hit
+
+    def _draw_leg_overlay(self, canvas, width, height, scale):
+        # Drawn first so pin labels stay on top of it.
+        canvas.create_text(14, 32, anchor='nw', text='LEG PIN MANAGER  ·  non-leg geometry dimmed',
+                           fill=LEG_PIN_COLOR, font=('liberation sans', 10, 'bold'), tags=('leg_banner',))
+        ids = {leg['id'] for leg in self.leg_lines}
+        for port in (self.geometry or {}).get('ports', []):
+            if port.get('custom_leg_pin') or port.get('name') in ids or not self._bounds_valid(port.get('bbox')):
+                continue
+            if not self.layer_visible.get(port.get('layer', ''), True):
+                continue
+            x0, y0 = self.xy(*port['bbox'][0])
+            x1, y1 = self.xy(*port['bbox'][1])
+            color = dim_color('#95b3cb')
+            canvas.create_rectangle(x0, y1, x1, y0, outline=color, width=1, tags=('port', 'dimmed'))
+            canvas.create_text((x0 + x1) / 2, min(y0, y1) - 6, text=port.get('name', ''), fill=color,
+                               font=PIN_LABEL_FONT, tags=('port_label', 'dimmed'))
+        for leg in self.leg_lines:
+            if not self._leg_visible(leg):
+                continue
+            points = [value for point in leg['centerline'] for value in self.xy(*point)]
+            line_width = max(2.0, leg['width'] * scale)
+            selected = leg['id'] == self.leg_selected
+            if selected:
+                canvas.create_line(*points, width=line_width + 6, fill=LEG_SELECTED_COLOR, capstyle='projecting',
+                                   joinstyle='miter', tags=('leg_selected', 'leg:' + leg['id']))
+            canvas.create_line(*points, width=line_width, fill=self.layer_color(leg['layer']), capstyle='butt',
+                               joinstyle='miter', tags=('leg', 'leg:' + leg['id']))
+            ex, ey = self.xy(*leg['centerline'][-1])
+            canvas.create_oval(ex - 3, ey - 3, ex + 3, ey + 3, fill=LEG_SELECTED_COLOR if selected else '#d9e6ee',
+                               outline='', tags=('leg_end', 'leg:' + leg['id']))
+            click = self.leg_clicks.get(leg['id'])
+            if click is not None:
+                px, py = self.xy(*leg_point(leg, click))
+                canvas.create_line(px - 7, py, px + 7, py, fill=LEG_CLICK_COLOR, width=2, tags=('leg_click',))
+                canvas.create_line(px, py - 7, px, py + 7, fill=LEG_CLICK_COLOR, width=2, tags=('leg_click',))
+        regions = self.leg_pin_regions()
+        for region in regions:
+            selected = self.leg_pin_selected == (region['leg'], region['index'])
+            x0, y0, x1, y1 = region['region']
+            canvas.create_rectangle(x0, y0, x1, y1, outline=LEG_PIN_SELECTED if selected else LEG_PIN_COLOR,
+                                    width=3 if selected else 2, fill=LEG_PIN_COLOR,
+                                    stipple='gray50' if selected else 'gray25',
+                                    tags=('leg_pin', 'leg_pin:{}:{}'.format(region['leg'], region['index'])) +
+                                         (('leg_pin_selected',) if selected else ()))
+        label_boxes = []
+        boxes = [region['region'] for region in regions]
+        for region in regions:
+            selected = self.leg_pin_selected == (region['leg'], region['index'])
+            color = LEG_PIN_SELECTED if selected else LEG_PIN_COLOR
+            label = canvas.create_text(*region['point'], text=region['name'], fill=color,
+                                       font=('liberation sans', -11, 'bold'), tags=('leg_pin_label',))
+            box = canvas.bbox(label)
+            if not box:
+                continue
+            dx, dy, placed, _frameless = pin_label_offset(region, box, boxes, label_boxes, width, height)
+            canvas.move(label, dx, dy)
+            label_boxes.append(placed)
+            background = canvas.create_rectangle(*placed, fill='#1d0f1a', outline=color, tags=('leg_pin_label',))
+            canvas.tag_lower(background, label)
 
     def validate_imported(self, source):
         if not isinstance(source, dict):
@@ -1789,6 +3016,7 @@ class TransformerApp:
             self.spine_follow.set(design['parameters'].get('pgs_spine_width') is None)
             self.vars['cell'].set(design['cell'])
             self.vars['structure'].set(self._structure_value(design['model'], design.get('structure')))
+            self.leg_pins_draft = copy.deepcopy(design.get('leg_pins'))
             self._save_body_draft()
         finally:
             self.suspended = was_suspended
@@ -1886,6 +3114,7 @@ class TransformerApp:
                 self.close()
                 return
             emx_page.destroy()
+        self._cancel_3d_callbacks()
         self.closed = True
         for timer in (getattr(self, '_poll_after', None), self.preview_after, self.redraw_after):
             if timer is not None:

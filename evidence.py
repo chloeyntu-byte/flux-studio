@@ -105,19 +105,32 @@ def verify_readback(readback, geometry, grid):
     if len(cuts) != total_cuts:
         raise RuntimeError('OA native via master cut count does not match the calculated array.')
     actual_ports = [r for r in rows if r[0] == 'PORT']
-    if len(actual_ports) != len(geometry['ports']):
+    # Same-named pins (several leg pins joined as one terminal) share one OA
+    # terminal that carries one pin figure per geometry port.
+    expected_terms = {}
+    for port in geometry['ports']:
+        expected_terms.setdefault(port['name'], []).append(port)
+    if len(actual_ports) != len(expected_terms):
         raise RuntimeError('OA port count does not match the applied geometry.')
     by_name = {r[1]: r for r in actual_ports}
-    pin_access = {r[1]: r for r in rows if r[0] == 'PINACCESS'}
-    for port in geometry['ports']:
-        row = by_name.get(port['name'])
-        if not row or sexpr(row[2]) != port['net'] or not close_numbers(sexpr(row[3]), [port['bbox']], grid/2):
+    pin_access = {}
+    for r in rows:
+        if r[0] == 'PINACCESS':
+            pin_access.setdefault(r[1], []).append(r)
+    for name, ports in expected_terms.items():
+        row = by_name.get(name)
+        boxes = sorted(port['bbox'] for port in ports)
+        actual_boxes = sexpr(row[3]) if row else None
+        if (not row or any(sexpr(row[2]) != port['net'] for port in ports) or not isinstance(actual_boxes, list) or
+                len(actual_boxes) != len(boxes) or not close_numbers(sorted(actual_boxes), boxes, grid/2)):
             raise RuntimeError('OA port name, net, terminal binding or bounds do not match the applied geometry.')
-        if sexpr(row[4]) != [[port['layer'], 'drawing']]:
+        if sorted(map(str, sexpr(row[4]))) != sorted(str([port['layer'], 'drawing']) for port in ports):
             raise RuntimeError('OA port metal layer does not match the applied geometry.')
-        if port.get('access_direction'):
-            direction = pin_access.get(port['name'])
-            if not direction or sexpr(direction[2]) != [port['access_direction']] or sexpr(direction[3]) != 'inputOutput':
+        wanted = sorted(port['access_direction'] for port in ports if port.get('access_direction'))
+        if wanted:
+            directions = pin_access.get(name, [])
+            if (len(directions) != len(ports) or any(sexpr(d[3]) != 'inputOutput' for d in directions) or
+                    sorted(str(sexpr(d[2])[0]) if sexpr(d[2]) else '' for d in directions) != wanted):
                 raise RuntimeError('OA native pin access direction or terminal direction does not match the extraction contract.')
     expected_groups = Counter()
     for figures in (geometry['polygons'], geometry['vias'], geometry['ports']):

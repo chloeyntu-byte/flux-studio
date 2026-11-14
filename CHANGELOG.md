@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.0 — 2026-11-14
+
+- Leg Pin manager (`leg_pins.py`, Layout page **Leg Pins** mode): several named pins per terminal leg, add / delete / rename / drag along the leg, per-leg and global restore, non-leg geometry dimmed. Positions are stored as a fraction of the leg length and follow lead-extension sweeps. Pin layouts are saved with design JSON, presets and EMX campaigns.
+- EMX metrics on chosen pins: `L[p,n]`, `Q[p,n]`, `Lp/Ls/Qp/Qs[p,n]` and `k[p1,n1,p2,n2]` goals; pin selectors in the goal editor; one result/chart/video column per pin-assigned metric; custom leg pins require explicit pins (`emx_search`, `emx_adapter`, `emx_campaign`, `emx_page`, `result_data`, `emx_charts`, `optimization_video`, `video_chart`).
+- Optional 3D preview through the Layout 3D Viewer embedding interface: `FLUX_VL3D_ROOT` / `FLUX_VL3D_PYTHONPATH`, 2D / 3D Studio / 3D Metal selector, Leg Pins beside 3D, pin selection synchronised both ways, fallback to 2D when OpenGL fails. Without `FLUX_VL3D_ROOT` nothing changes. The launcher passes both variables.
+- New tests: leg pins, Leg Pin manager, pin-assigned EMX goals and the 3D preview (with a stand-in engine). Flux suite: 506 tests; SNPFit suite: 164 tests (3 skipped).
+- New screenshots and animations; README sections for the structure packs, 3D preview, Leg Pins and pin metrics.
+
 ## v1.1.0 — 2026-11-13
 
 - Structure packs: structures other than the built-in differential inductor now load at start-up from `FLUX_PACKS` or `packs/` (`structure_packs.py`, `docs/STRUCTURE_PACKS.md`).

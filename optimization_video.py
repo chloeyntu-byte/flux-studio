@@ -32,7 +32,8 @@ def _ordered_rows(rows):
 
 
 def _chart_row(row, goals, constraints):
-    verified = hydrate_row(row)
+    from emx_search import metric_specs
+    verified = hydrate_row(row, metric_specs(goals, constraints))
     metrics = verified.get('metrics', [])
     selected = [sample for sample in metrics if any(
         abs(sample['frequency_hz'] - goal['frequency_hz']) <= goal['frequency_hz'] * 1e-12

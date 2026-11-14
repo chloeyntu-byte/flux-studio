@@ -258,7 +258,7 @@ def write_cell(library, cell, workspace, technology, result, design, runtime=Non
                   'dbAddFigToFigGroup(groups[%s] v)' % skill(group_part(via.get('part', 'body')))]
     for port in geometry['ports']:
         lines += ['n=dbMakeNet(cv %s)' % skill(port['net']),
-                  'term=dbCreateTerm(n %s "inputOutput")' % skill(port['name']),
+                  'term=or(dbFindTermByName(cv %s) dbCreateTerm(n %s "inputOutput"))' % (skill(port['name']), skill(port['name'])),
                   's=dbCreateRect(cv list(%s "drawing") %s)' % (skill(port['layer']), skill(port['bbox'])),
                   's~>net=n',
                   'pin=dbCreatePin(n s %s term)' % skill(port['name']),
@@ -295,7 +295,7 @@ def write_cell(library, cell, workspace, technology, result, design, runtime=Non
     readback = (directory / 'readback.tsv').read_text(encoding='utf-8')
     counts_line = next(line for line in readback.splitlines() if line.startswith('COUNTS\t'))
     shapes, vias, ports, groups = map(int, counts_line.split('\t')[1:])
-    if shapes != len(geometry['polygons']) + len(geometry['ports']) or vias != len(geometry['vias']) or ports != len(geometry['ports']) or groups != len(parts):
+    if shapes != len(geometry['polygons']) + len(geometry['ports']) or vias != len(geometry['vias']) or ports != len({p['name'] for p in geometry['ports']}) or groups != len(parts):
         raise RuntimeError('Saved OA shape/via/port/group counts do not match. Results are retained for inspection.')
     from evidence import verify_readback
     from technology import drawing_grid
