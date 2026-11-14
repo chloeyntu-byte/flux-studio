@@ -107,11 +107,35 @@ python3 -B app.py --example
 - 同一指标在不同 pin 上是不同的目标；结果表、图表和优化视频为每个指定 pin 的指标单独加一列。
 - 未使用自定义 pin 时，pin 留空即使用内置的绕组端口对。版图一旦使用自定义 leg pin，每个指标都必须指定 pin；同步版图中已不存在的 pin 所在行显示为红色。
 
-### 结果
+### 扫参与热图
+
+扫参会用 EMX 求解所选参数取值的每一种组合。热图把两个扫描参数放在横纵轴上，每个格子的颜色表示某个频点下的一个指标（下图是 1 GHz 的 Qp），趋势和可用区域一眼就能看出来。点击格子会在结果表中选中对应的候选。
 
 ![扫参结果：合成理想电路回放的 Qp 热图](docs/screenshots/flux-results.png)
 
 *九个理想耦合电感 SNP 的合成回放（见快速开始），不是 EM 预测。*
+
+### 多目标优化与 Pareto 前沿
+
+优化模式用 NSGA-II 在同一组参数上同时处理多个目标和约束，例如 Qp 越高越好、Lp 尽量接近目标值、耦合 k 越强越好。这种情况下很少有唯一的最优解。如果没有其他可行设计在所有目标上都不差、且至少一项更好，这个设计就在 **Pareto 前沿**上；前沿之外的设计至少在一个目标上更差，又没有在别处补回来。两个目标时前沿是一条曲线，三个目标时是一张可以旋转查看的曲面，沿着前沿移动，就能看到改善一个目标要在另一个目标上付出多少。
+
+![旋转的三目标 Pareto 曲面：Lp、Qp 和有符号 k](docs/screenshots/flux-pareto-surface.gif)
+
+![同一次优化的两目标与三目标 Pareto 前沿](docs/screenshots/flux-pareto-2d.png)
+
+*一次真实的 EMX 优化：20 GHz 共面 1:1 变压器（隐式共面、交叉引线，属于**结构包**，不随仓库提供）。每个点都是一个实际求解的候选；曲面只连接已求解的 Pareto 设计，不做插值；有限预算得到的前沿不能证明是全局最优。*
+
+### SNPFit：从 S 参数到等效电路
+
+选中一个结果交给内置的 **SNPFit Studio**。它用明确的 RLC(K) 电路拟合 Touchstone 数据，逐点对比拟合模型与 EMX 样本（每个绕组的 L、Q 以及 k），并可以为电路生成原生原理图、符号和版图示意。SNPFit 也可以单独处理任意 Touchstone 文件（见快速开始）。
+
+![拟合模型与 EMX 样本对比：1–30 GHz 的 Lp、Qp、Ls、Qs 和 k](docs/screenshots/snpfit-pack-comparison.png)
+
+![SNPFit 生成的原生原理图：每段绕组标出拟合的 L、R 和 Q](docs/screenshots/snpfit-pack-schematic.png)
+
+![SNPFit 处理合成 RLC 示例：原始与拟合的 L、Q、R](docs/screenshots/snpfit-results.png)
+
+*前两张图来自一个独立生成、提取并拟合的共面变压器（属于**结构包**，不随仓库提供）；EMX 是仿真，不是实测。最后一张使用仓库自带的合成 RLC 示例。*
 
 ## 环境要求
 
