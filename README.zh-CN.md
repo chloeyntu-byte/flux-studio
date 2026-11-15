@@ -252,11 +252,12 @@ DISPLAY=:88 SNPFIT_GUI_TESTS=1 python3 -B -m unittest discover -s tests_snpfit
 
 ## RF-FIELDWORK
 
-产品介绍页：https://rf-fieldwork.pages.dev/flux/?lang=zh（含配音演示片的工具在页面上可直接观看）
+- 总站（全部工具、演示片与项目进展）：https://rf-fieldwork.pages.dev/?lang=zh
+- 本工具介绍页（含配音演示片）：https://rf-fieldwork.pages.dev/flux/?lang=zh
 
 其他开源工具：
 
-- [Cap Array Lab](https://github.com/chloeyntu-byte/cap-array-lab)：电容阵列 C/Q、寄生路径、谐振与 Z11
+- [Tank Scan Lab](https://github.com/chloeyntu-byte/tank-scan-lab)：LC 谐振腔扫描（f0、Rp、gm、起振裕量、损耗分摊）、电容阵列 C/Q 与谐振
 - [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer)：三维阅读版图、定位 pin、追踪连接
 - [VCO ISF Explorer](https://github.com/chloeyntu-byte/vco-isf-explorer)：ISF、闪烁噪声上变频与相噪贡献
 - [Crescendo](https://github.com/chloeyntu-byte/crescendo)：在 Cadence Maestro 里自动优化器件尺寸

@@ -252,11 +252,12 @@ Use your own private X display when reproducing these checks. The 3D tests use a
 
 ## RF-FIELDWORK
 
-Product page: https://rf-fieldwork.pages.dev/flux/?lang=en
+- Lab home (all tools, narrated films and progress): https://rf-fieldwork.pages.dev/?lang=en
+- This tool's page (with a narrated film): https://rf-fieldwork.pages.dev/flux/?lang=en
 
 Other open-source tools:
 
-- [Cap Array Lab](https://github.com/chloeyntu-byte/cap-array-lab): capacitor-array C/Q, parasitic paths, resonance and Z11
+- [Tank Scan Lab](https://github.com/chloeyntu-byte/tank-scan-lab): LC tank scans (f0, Rp, gm, startup margin, loss shares), capacitor-array C/Q and resonance
 - [Layout 3D Viewer](https://github.com/chloeyntu-byte/layout-3d-viewer): read IC layouts in 3D, locate pins and trace connections
 - [VCO ISF Explorer](https://github.com/chloeyntu-byte/vco-isf-explorer): ISF, flicker-noise up-conversion and phase-noise contributions
 - [Crescendo](https://github.com/chloeyntu-byte/crescendo): automatic device-size optimization inside Cadence Maestro
